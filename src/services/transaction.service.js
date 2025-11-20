@@ -4,7 +4,7 @@ const User = require('../models/User');
 const Game = require('../models/Game');
 const Portfolio = require('../models/Portfolio');
 const blockchainService = require('./blockchain.service');
-const FusioFantasyGame = require('../../artifacts/contracts/FusioFantasyGame.sol/FusioFantasyGame.json');
+const FusioFantasyGameV2 = require('../config/FusioFantasyGameV2.json');
 
 class TransactionService {
     constructor() {
@@ -125,7 +125,7 @@ class TransactionService {
 
             // Get transaction receipt
             const receipt = await blockchainService.provider.getTransactionReceipt(transactionHash);
-            
+
             if (!receipt) {
                 return transaction;
             }
@@ -135,7 +135,7 @@ class TransactionService {
                 // Find BalanceWithdrawn event
                 const contract = new ethers.Contract(
                     process.env.CONTRACT_ADDRESS,
-                    FusioFantasyGame.abi,
+                    FusioFantasyGameV2.abi,
                     blockchainService.provider
                 );
 
