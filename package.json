@@ -1,0 +1,65 @@
+{
+  "name": "fusio-fantasy",
+  "version": "1.0.0",
+  "description": "Backend for Portfolio Competition Game with AI-generated portfolio",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest --detectOpenHandles",
+    "lint": "eslint src/**/*.js",
+    "format": "prettier --write 'src/**/*.js'",
+    "deploy:contract": "hardhat run scripts/deploy_v2_testnet.js --network bscTestnet",
+    "verify:contract": "hardhat verify --network bsc 0x060496207348916b28C0aBD32A4000F87Ab02eB0",
+    "seed:assets": "node src/scripts/initializeAssets.js"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^4.9.0",
+    "@openzeppelin/contracts-upgradeable": "^4.9.6",
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.4.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "ethers": "^5.7.2",
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.7.0",
+    "helmet": "^7.0.0",
+    "jsonwebtoken": "^9.0.0",
+    "mongoose": "^7.3.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.2",
+    "uuid": "^11.1.0",
+    "web3": "^1.10.0",
+    "winston": "^3.9.0"
+  },
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@nomiclabs/hardhat-etherscan": "^3.1.7",
+    "@nomiclabs/hardhat-waffle": "^2.0.6",
+    "@openzeppelin/hardhat-upgrades": "^2.5.1",
+    "chai": "^4.3.7",
+    "eslint": "^8.43.0",
+    "eslint-config-prettier": "^8.8.0",
+    "ethereum-waffle": "^4.0.10",
+    "hardhat": "^2.15.0",
+    "jest": "^29.5.0",
+    "nodemon": "^2.0.22",
+    "prettier": "^2.8.8",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coveragePathIgnorePatterns": [
+      "/node_modules/"
+    ],
+    "testMatch": [
+      "**/test/**/*.test.js"
+    ]
+  }
+}

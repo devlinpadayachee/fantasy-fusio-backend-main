@@ -1,0 +1,422 @@
+{
+  "info": {
+    "name": "Fusio Fantasy V1.0.2",
+    "description": "API collection for Portfolio Competition Game with AI-generated portfolio ('Ape').\n\nKey Features:\n- Wallet-based authentication\n- Portfolio creation and management\n- Real-time price tracking (DeFi & TradFi)\n- Game lifecycle management\n- Transaction handling with USDC\n- Performance analytics and leaderboards\n\nAuthentication:\n- Connect wallet to generate nonce\n- Sign message with wallet\n- Receive JWT token for API access\n\nGame Lifecycle:\n- Games start every Monday at 03:00 UTC\n- Portfolio submissions until Monday 03:00 UTC\n- Live tracking and updates every 5-10 minutes\n- Game settlement on Sunday 23:59 UTC\n\nEnvironment Variables:\n- baseUrl: API base URL (default: http://localhost:5000)\n- jwt_token: Authentication token from wallet verification",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Get Nonce",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/nonce",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "nonce"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x123...789\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Generate nonce for wallet signature"
+          }
+        },
+        {
+          "name": "Check Username",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/username/check?username=CryptoTrader",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "username", "check"],
+              "query": [
+                {
+                  "key": "username",
+                  "value": "CryptoTrader"
+                }
+              ]
+            },
+            "description": "Check if username is available"
+          }
+        },
+        {
+          "name": "Verify Signature",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "verify"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x123...789\",\n  \"signature\": \"0xabc...def\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Verify wallet signature and get JWT token"
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "username",
+                  "value": "CryptoTrader",
+                  "type": "text",
+                  "description": "Username (3-50 characters)"
+                },
+                {
+                  "key": "profileImage",
+                  "type": "file",
+                  "description": "Profile image file (optional)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "Update user profile with username and/or profile image. The profile image will be uploaded to AWS S3.\n\nRequirements:\n- Username must be between 3 and 50 characters\n- Username must be unique\n- Profile image is optional\n\nAuthentication required: Yes (JWT token)\n\nResponse includes updated user profile information including:\n- User ID\n- Wallet address\n- Username\n- Profile image URL\n- Game statistics (total games played, games won, total earnings)"
+          }
+        },
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "Get current user profile information"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Portfolio Management",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/dashboard?gameType=DEFI",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "dashboard"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "",
+                  "description": "User ID (optional if wallet provided)",
+                  "disabled": true
+                },
+                {
+                  "key": "wallet",
+                  "value": "",
+                  "description": "Wallet address (optional if userId provided)",
+                  "disabled": true
+                },
+                {
+                  "key": "gameType",
+                  "value": "DEFI",
+                  "description": "Game type (DEFI or TRADFI)"
+                }
+              ]
+            },
+            "description": "Get user's dashboard data including portfolios and active game.\n\nRequired Parameters:\n- Either userId or wallet must be provided\n- gameType must be either DEFI or TRADFI\n\nResponse includes:\n- List of user's portfolios with status and asset details\n- Current active game information if available\n\nAuthentication required: Yes (JWT token)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Management",
+      "item": [
+        {
+          "name": "Asset Management",
+          "item": [
+            {
+              "name": "Update Ape Assets",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{jwt_token}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"assetIds\": [1, 2, 3]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/assets/ape",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "assets", "ape"]
+                },
+                "description": "Update ape status for multiple assets. This will:\n1. Reset all assets' ape status to false\n2. Set ape status to true for the provided asset IDs\n\nRequired fields:\n- assetIds: Array of asset IDs to mark as ape assets\n\nAuthentication: Admin required"
+              }
+            },
+            {
+              "name": "Get Ape Assets",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{jwt_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/assets/ape",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "assets", "ape"]
+                },
+                "description": "Get all assets marked as ape assets.\n\nReturns an array of assets with:\n- assetId\n- symbol\n- name\n- ape status\n\nAuthentication: Admin required"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Game Management",
+          "item": [
+            {
+              "name": "Get All Games",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{jwt_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/assets/games",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "assets", "games"]
+                },
+                "description": "Get all games for admin dashboard.\n\nReturns an array of games with:\n- srNo: Serial number\n- _id: Game ID\n- gameTitle: Formatted game title\n- gameMode: Game type (DEFI/TRADFI)\n- prizePool: Total prize pool\n- totalParticipants: Number of participants\n- startTime: Game start time\n- endTime: Game end time\n- gameStatus: Current game status\n\nAuthentication: Admin required"
+              }
+            },
+            {
+              "name": "Get All Portfolios",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{jwt_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/assets/portfolios?username=&walletAddress=&type=&status=",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "assets", "portfolios"],
+                  "query": [
+                    {
+                      "key": "username",
+                      "value": "",
+                      "description": "Filter by username (case-insensitive partial match)"
+                    },
+                    {
+                      "key": "walletAddress",
+                      "value": "",
+                      "description": "Filter by wallet address (case-insensitive partial match)"
+                    },
+                    {
+                      "key": "type",
+                      "value": "",
+                      "description": "Filter by portfolio type (DEFI or TRADFI)"
+                    },
+                    {
+                      "key": "status",
+                      "value": "",
+                      "description": "Filter by portfolio status"
+                    }
+                  ]
+                },
+                "description": "Get all portfolios for admin dashboard with optional filtering.\n\nQuery Parameters (all optional):\n- username: Filter by username (case-insensitive partial match)\n- walletAddress: Filter by wallet address (case-insensitive partial match)\n- type: Filter by portfolio type (DEFI or TRADFI)\n- status: Filter by portfolio status\n\nReturns an array of portfolios with:\n- srNo: Serial number\n- username: User's username\n- walletAddress: User's wallet address\n- type: Portfolio type (DEFI/TRADFI)\n- assets: Formatted assets string with allocations\n- currentValue: Current portfolio value\n- status: Portfolio status\n- createdAt: Portfolio creation date\n- gameId: Associated game ID\n- gameName: Formatted game name\n\nAuthentication: Admin required"
+              }
+            },
+            {
+              "name": "Get All Users",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{jwt_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/assets/users",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "assets", "users"]
+                },
+                "description": "Get all users for admin dashboard.\n\nReturns an array of users with:\n- srNo: Serial number\n- username: User's username\n- walletAddress: User's wallet address\n- gamesWon: Number of games won\n- earnings: Total earnings\n- lockedAmount: Currently locked balance\n- createdAt: User registration date\n\nAuthentication: Admin required"
+              }
+            },
+            {
+              "name": "Get All Transactions",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{jwt_token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/assets/transactions?transactionHash=&type=&portfolioId=&fromAddress=&toAddress=&status=",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["admin", "assets", "transactions"],
+                  "query": [
+                    {
+                      "key": "transactionHash",
+                      "value": "",
+                      "description": "Filter by transaction hash (case-insensitive partial match)"
+                    },
+                    {
+                      "key": "type",
+                      "value": "",
+                      "description": "Filter by transaction type (ENTRY_FEE, ADMIN_FEE, CREATE_PORTFOLIO, GAS_FEE, REWARD, WITHDRAWAL, REFUND)"
+                    },
+                    {
+                      "key": "portfolioId",
+                      "value": "",
+                      "description": "Filter by portfolio ID"
+                    },
+                    {
+                      "key": "fromAddress",
+                      "value": "",
+                      "description": "Filter by from address (case-insensitive partial match)"
+                    },
+                    {
+                      "key": "toAddress",
+                      "value": "",
+                      "description": "Filter by to address (case-insensitive partial match)"
+                    },
+                    {
+                      "key": "status",
+                      "value": "",
+                      "description": "Filter by transaction status (PENDING, COMPLETED, FAILED)"
+                    }
+                  ]
+                },
+                "description": "Get all transactions for admin dashboard with optional filtering.\n\nQuery Parameters (all optional):\n- transactionHash: Filter by transaction hash (case-insensitive partial match)\n- type: Filter by transaction type\n- portfolioId: Filter by portfolio ID\n- fromAddress: Filter by from address (case-insensitive partial match)\n- toAddress: Filter by to address (case-insensitive partial match)\n- status: Filter by transaction status\n\nReturns an array of transactions with:\n- srNo: Serial number\n- transactionHash: Transaction hash\n- type: Transaction type\n- amount: Transaction amount\n- portfolioId: Associated portfolio ID\n- fromAddress: From address\n- toAddress: To address\n- networkFees: Network fees\n- status: Transaction status\n\nAuthentication: Admin required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Login/Create",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/admin/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["admin", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"securepassword123\",\n  \"walletAddress\": \"0x742d35Cc6634C0532925a3b8D4C9db96590c6C87\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Login as admin or create first admin if none exists.\n\nBehavior:\n- If no admin exists: Creates first admin with provided credentials\n- If admin exists: Validates credentials for login\n\nRequired fields:\n- email: Valid email address\n- password: Minimum 6 characters\n- walletAddress: Valid Ethereum address\n\nResponses:\n1. First Admin Creation:\n   - Status: 201\n   - Body: {\n       \"message\": \"Admin created and logged in successfully\",\n       \"token\": \"jwt_token\",\n       \"admin\": {\n         \"id\": \"admin_id\",\n         \"email\": \"admin@example.com\",\n         \"walletAddress\": \"0x742...c87\"\n       }\n     }\n\n2. Admin Login:\n   - Status: 200\n   - Body: {\n       \"message\": \"Login successful\",\n       \"token\": \"jwt_token\",\n       \"admin\": {\n         \"id\": \"admin_id\",\n         \"email\": \"admin@example.com\",\n         \"walletAddress\": \"0x742...c87\",\n         \"lastLogin\": \"2024-01-15T10:30:00.000Z\"\n       }\n     }\n\nError Responses:\n- 400: Missing required fields or invalid wallet address\n- 401: Invalid credentials\n- 500: Server error"
+      }
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [""]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"Status code is 200\", function () {",
+          "    pm.response.to.have.status(200);",
+          "});",
+          "",
+          "pm.test(\"Response has all expected fields\", function () {",
+          "    var jsonData = pm.response.json();",
+          "    pm.expect(jsonData).to.have.property('revenueGenerated');",
+          "    pm.expect(jsonData).to.have.property('transactionFeesCollected');",
+          "    pm.expect(jsonData).to.have.property('averageInvestmentPerUser');",
+          "    pm.expect(jsonData).to.have.property('playerParticipationPerGame');",
+          "    pm.expect(jsonData).to.have.property('newUsers');",
+          "    pm.expect(jsonData).to.have.property('walletConnects');",
+          "    pm.expect(jsonData).to.have.property('gamesPlayed');",
+          "    pm.expect(jsonData).to.have.property('portfolioCreations');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    }
+  ]
+}

@@ -1,0 +1,1178 @@
+{
+  "info": {
+    "name": "Fusio Fantasy API - Clean Collection",
+    "description": "Clean and organized API collection for Fusio Fantasy portfolio competition game.\n\nThis collection provides a comprehensive set of endpoints for:\n- Wallet-based authentication\n- Portfolio creation and management\n- Game participation and tracking\n- Asset management and price tracking\n- Transaction processing\n- Admin management\n- User notifications\n\n## Authentication Flow\n1. Get nonce for wallet address\n2. Sign message with wallet\n3. Verify signature to get JWT token\n4. Use JWT token for authenticated requests\n\n## Environment Variables\n- baseUrl: API base URL (default: http://localhost:5000)\n- jwt_token: JWT token from authentication\n- wallet_address: User's wallet address\n\n## Game Types\n- DEFI: DeFi assets and protocols\n- TRADFI: Traditional finance assets\n\n## Portfolio Status\n- PENDING: Awaiting transaction confirmation\n- ACTIVE: Currently in game\n- COMPLETED: Game finished\n- FAILED: Transaction failed or cancelled",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "description": "Wallet-based authentication endpoints",
+      "item": [
+        {
+          "name": "Get Nonce",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x742d35Cc6634C0532925a3b8D4C9db96590c6C87\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/nonce",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "nonce"]
+            },
+            "description": "Generate a nonce for wallet signature verification"
+          }
+        },
+        {
+          "name": "Verify Signature",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"0x742d35Cc6634C0532925a3b8D4C9db96590c6C87\",\n  \"signature\": \"0x1234567890abcdef...\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "verify"]
+            },
+            "description": "Verify wallet signature and receive JWT token"
+          }
+        },
+        {
+          "name": "Check Username Availability",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/username/check?username=CryptoTrader123",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "username", "check"],
+              "query": [
+                {
+                  "key": "username",
+                  "value": "CryptoTrader123"
+                }
+              ]
+            },
+            "description": "Check if a username is available for registration"
+          }
+        },
+        {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "Get current user's profile information"
+          }
+        },
+        {
+          "name": "Update User Profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "username",
+                  "value": "CryptoTrader123",
+                  "type": "text"
+                },
+                {
+                  "key": "profileImage",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "Update user profile with username and/or profile image"
+          }
+        },
+        {
+          "name": "Get Transaction History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "transactions"]
+            },
+            "description": "Get user's transaction history"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Portfolio Management",
+      "description": "Portfolio creation, management, and tracking",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/dashboard?gameType=DEFI",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "dashboard"],
+              "query": [
+                {
+                  "key": "gameType",
+                  "value": "DEFI"
+                }
+              ]
+            },
+            "description": "Get user's dashboard with portfolios and active game"
+          }
+        },
+        {
+          "name": "Get Pending Portfolios Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/pending-count",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "pending-count"]
+            },
+            "description": "Get count of pending portfolios and allowed count based on locked balance"
+          }
+        },
+        {
+          "name": "Submit Portfolio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gameId\": 123,\n  \"portfolioType\": \"DEFI\",\n  \"name\": \"My DeFi Portfolio\",\n  \"assets\": [\n    {\n      \"assetId\": 1,\n      \"symbol\": \"ETH\",\n      \"allocation\": 40\n    },\n    {\n      \"assetId\": 2,\n      \"symbol\": \"USDC\",\n      \"allocation\": 60\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "submit"]
+            },
+            "description": "Submit a new portfolio for game participation"
+          }
+        },
+        {
+          "name": "Submit Pending Portfolio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gameId\": 123,\n  \"portfolioType\": \"DEFI\",\n  \"name\": \"My DeFi Portfolio\",\n  \"assets\": [\n    {\n      \"assetId\": 1,\n      \"symbol\": \"ETH\",\n      \"allocation\": 40\n    },\n    {\n      \"assetId\": 2,\n      \"symbol\": \"USDC\",\n      \"allocation\": 60\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/submit-pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "submit-pending"]
+            },
+            "description": "Submit portfolio without immediate blockchain validation"
+          }
+        },
+        {
+          "name": "Store Transaction Hash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionHash\": \"0x1234567890abcdef...\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/store-hash/:portfolioId",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "store-hash", ":portfolioId"]
+            },
+            "description": "Store transaction hash for pending portfolio"
+          }
+        },
+        {
+          "name": "Check Transaction Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/check-transaction/:portfolioId",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "check-transaction", ":portfolioId"]
+            },
+            "description": "Check transaction status for portfolio"
+          }
+        },
+        {
+          "name": "Get User Portfolios",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/user?gameType=DEFI&status=ACTIVE&sort=createdAt",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "user"],
+              "query": [
+                {
+                  "key": "gameType",
+                  "value": "DEFI"
+                },
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                },
+                {
+                  "key": "sort",
+                  "value": "createdAt"
+                }
+              ]
+            },
+            "description": "Get user's portfolios with optional filtering"
+          }
+        },
+        {
+          "name": "Get Game Portfolios",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/game/:gameId?status=ACTIVE",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", "game", ":gameId"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "description": "Get all portfolios for a specific game"
+          }
+        },
+        {
+          "name": "Get Portfolio Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/:portfolioId",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", ":portfolioId"]
+            },
+            "description": "Get specific portfolio details"
+          }
+        },
+        {
+          "name": "Get Portfolio History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portfolio/:portfolioId/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio", ":portfolioId", "history"]
+            },
+            "description": "Get portfolio performance history"
+          }
+        },
+        {
+          "name": "Edit Portfolio",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"portfolioId\": \"portfolio_id\",\n  \"name\": \"Updated Portfolio Name\",\n  \"assets\": [\n    {\n      \"assetId\": 1,\n      \"allocation\": 50\n    },\n    {\n      \"assetId\": 2,\n      \"allocation\": 50\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/portfolio",
+              "host": ["{{baseUrl}}"],
+              "path": ["portfolio"]
+            },
+            "description": "Edit portfolio name and assets if not locked"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Game Management",
+      "description": "Game information, leaderboards, and game lifecycle",
+      "item": [
+        {
+          "name": "Get Game Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", "status"]
+            },
+            "description": "Get current game status and information"
+          }
+        },
+        {
+          "name": "Get Game Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game/:gameId",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", ":gameId"]
+            },
+            "description": "Get detailed information about a specific game"
+          }
+        },
+        {
+          "name": "Check Game Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game/check/:gameId/:portfolioType",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", "check", ":gameId", ":portfolioType"]
+            },
+            "description": "Check if user can submit portfolio for specific game"
+          }
+        },
+        {
+          "name": "Get Global Leaderboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game/leaderboard/global",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", "leaderboard", "global"]
+            },
+            "description": "Get global leaderboard across all games"
+          }
+        },
+        {
+          "name": "Get Game Leaderboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game/:gameId/leaderboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", ":gameId", "leaderboard"]
+            },
+            "description": "Get leaderboard for specific game"
+          }
+        },
+        {
+          "name": "Get Game History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/game/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", "history"]
+            },
+            "description": "Get user's game history"
+          }
+        },
+        {
+          "name": "Get Upcoming Games",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game/upcoming",
+              "host": ["{{baseUrl}}"],
+              "path": ["game", "upcoming"]
+            },
+            "description": "Get list of upcoming games"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Asset Management",
+      "description": "Asset information and price tracking",
+      "item": [
+        {
+          "name": "Get All Assets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/assets",
+              "host": ["{{baseUrl}}"],
+              "path": ["assets"]
+            },
+            "description": "Get all available assets"
+          }
+        },
+        {
+          "name": "Get Assets by Type",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/assets/type/:type",
+              "host": ["{{baseUrl}}"],
+              "path": ["assets", "type", ":type"]
+            },
+            "description": "Get assets filtered by type (DEFI/TRADFI)"
+          }
+        },
+        {
+          "name": "Get Asset Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/assets/:assetId",
+              "host": ["{{baseUrl}}"],
+              "path": ["assets", ":assetId"]
+            },
+            "description": "Get detailed information about specific asset"
+          }
+        },
+        {
+          "name": "Get 24h Changes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/assets/changes/24h",
+              "host": ["{{baseUrl}}"],
+              "path": ["assets", "changes", "24h"]
+            },
+            "description": "Get 24-hour price changes for all assets"
+          }
+        },
+        {
+          "name": "Get 24h Changes by Type",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/assets/changes/type/:type",
+              "host": ["{{baseUrl}}"],
+              "path": ["assets", "changes", "type", ":type"]
+            },
+            "description": "Get 24-hour price changes for assets by type"
+          }
+        },
+        {
+          "name": "Get Price History",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetIds\": [1, 2, 3],\n  \"type\": \"DEFI\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/assets/price-history",
+              "host": ["{{baseUrl}}"],
+              "path": ["assets", "price-history"]
+            },
+            "description": "Get price history for multiple assets"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transaction Management",
+      "description": "Transaction processing and history",
+      "item": [
+        {
+          "name": "Process Entry Fee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gameId\": 123,\n  \"portfolioType\": \"DEFI\",\n  \"amount\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/transactions/entry-fee",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "entry-fee"]
+            },
+            "description": "Process entry fee payment for game participation"
+          }
+        },
+        {
+          "name": "Process Withdrawal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 50\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/transactions/withdraw",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "withdraw"]
+            },
+            "description": "Process withdrawal of winnings"
+          }
+        },
+        {
+          "name": "Get Withdrawal Info",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/withdraw-info",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "withdraw-info"]
+            },
+            "description": "Get withdrawal information and limits"
+          }
+        },
+        {
+          "name": "Get Transaction History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "history"]
+            },
+            "description": "Get user's transaction history"
+          }
+        },
+        {
+          "name": "Get User Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/balance",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "balance"]
+            },
+            "description": "Get user's current balance"
+          }
+        },
+        {
+          "name": "Get Transaction Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "stats"]
+            },
+            "description": "Get user's transaction statistics"
+          }
+        },
+        {
+          "name": "Get Transaction Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/:transactionHash",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", ":transactionHash"]
+            },
+            "description": "Get details for specific transaction"
+          }
+        },
+        {
+          "name": "Retry Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/:transactionHash/retry",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", ":transactionHash", "retry"]
+            },
+            "description": "Retry failed transaction"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "description": "User notification management",
+      "item": [
+        {
+          "name": "Get Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications"]
+            },
+            "description": "Get user's notifications"
+          }
+        },
+        {
+          "name": "Get Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/unread",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "unread"]
+            },
+            "description": "Get count of unread notifications"
+          }
+        },
+        {
+          "name": "Mark as Read",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/:notificationId/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", ":notificationId", "read"]
+            },
+            "description": "Mark specific notification as read"
+          }
+        },
+        {
+          "name": "Mark All as Read",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": ["{{baseUrl}}"],
+              "path": ["notifications", "read-all"]
+            },
+            "description": "Mark all notifications as read"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Management",
+      "description": "Admin-only endpoints for system management",
+      "item": [
+        {
+          "name": "Admin Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"securepassword123\",\n  \"walletAddress\": \"0x742d35Cc6634C0532925a3b8D4C9db96590c6C87\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "login"]
+            },
+            "description": "Admin login or create first admin account"
+          }
+        },
+        {
+          "name": "Get All Games",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/games",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "games"]
+            },
+            "description": "Get all games (Admin only)"
+          }
+        },
+        {
+          "name": "Get All Portfolios",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/portfolios?username=&walletAddress=&type=&status=",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "portfolios"],
+              "query": [
+                {
+                  "key": "username",
+                  "value": ""
+                },
+                {
+                  "key": "walletAddress",
+                  "value": ""
+                },
+                {
+                  "key": "type",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Get all portfolios with optional filtering (Admin only)"
+          }
+        },
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users"]
+            },
+            "description": "Get all users (Admin only)"
+          }
+        },
+        {
+          "name": "Get All Transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/transactions?transactionHash=&type=&portfolioId=&fromAddress=&toAddress=&status=",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "transactions"],
+              "query": [
+                {
+                  "key": "transactionHash",
+                  "value": ""
+                },
+                {
+                  "key": "type",
+                  "value": ""
+                },
+                {
+                  "key": "portfolioId",
+                  "value": ""
+                },
+                {
+                  "key": "fromAddress",
+                  "value": ""
+                },
+                {
+                  "key": "toAddress",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Get all transactions with optional filtering (Admin only)"
+          }
+        },
+        {
+          "name": "Get Ape Assets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/assets/ape",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "assets", "ape"]
+            },
+            "description": "Get all assets marked as ape assets (Admin only)"
+          }
+        },
+        {
+          "name": "Update Ape Assets",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetIds\": [1, 2, 3]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/assets/ape",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "assets", "ape"]
+            },
+            "description": "Update ape assets status (Admin only)"
+          }
+        },
+        {
+          "name": "Distribute Rewards",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gameId\": 123\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/transactions/game/:gameId/distribute-rewards",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "transactions", "game", ":gameId", "distribute-rewards"]
+            },
+            "description": "Distribute rewards for game winners (Admin only)"
+          }
+        },
+        {
+          "name": "Get Pending Transactions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/transactions/pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "transactions", "pending"]
+            },
+            "description": "Get all pending transactions (Admin only)"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [""]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"Status code is 200\", function () {",
+          "    pm.response.to.have.status(200);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    },
+    {
+      "key": "wallet_address",
+      "value": "0x742d35Cc6634C0532925a3b8D4C9db96590c6C87",
+      "type": "string"
+    }
+  ]
+}
