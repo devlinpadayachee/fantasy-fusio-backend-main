@@ -60,7 +60,7 @@ class GameService {
         gameId: gameId,
         isApe: true,
       });
-
+      
       if (!existingApePortfolio) {
         // Generate Ape's portfolio and update game
         const apePortfolioId = await this.generateApePortfolio(

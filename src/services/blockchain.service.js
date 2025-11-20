@@ -1,8 +1,8 @@
 const { ethers } = require('ethers');
 const config = require('../config');
 const transactionQueue = require('./transaction-queue.service');
-const FusioFantasyGameV2 = require('../../artifacts/contracts/FusioFantasyGameV2.sol/FusioFantasyGameV2.json');
-const USDC = require('../../artifacts/contracts/test/MockUSDC.sol/MockUSDC.json');
+const FusioFantasyGameV2 = require('../config/FusioFantasyGameV2.json');
+const USDC = require('../config/MockUSDC.json');
 const Transaction = require('../models/Transaction');
 const User = require('../models/User');
 
@@ -463,6 +463,27 @@ class BlockchainService {
       return owner;
     } catch (error) {
       throw new Error(`Failed to get portfolio owner: ${error.message}`);
+    }
+  }
+
+  async mintUSDC(toAddress, amount) {
+    try {
+      const amountInWei = ethers.utils.parseUnits(amount.toString(), 18);
+
+      const receipt = await transactionQueue.addTransaction(async (nonce) => {
+        return await this.usdcContract.mint(toAddress, amountInWei, {
+          gasLimit: 500000,
+          nonce,
+        });
+      }, `Mint USDC to ${toAddress} amount ${amount}`);
+
+      return {
+        transactionHash: receipt.transactionHash,
+        toAddress,
+        amount: amountInWei.toString(),
+      };
+    } catch (error) {
+      throw new Error(`Failed to mint USDC: ${error.message}`);
     }
   }
   async batchAssignRewards(gameId, portfolioIds, amounts) {
