@@ -140,6 +140,7 @@ if (config.nodeEnv === 'development') {
 
 // Validation
 const requiredEnvVars = [
+    'MONGODB_URI',
     'CONTRACT_ADDRESS',
     'USDC_ADDRESS',
     'ADMIN_PRIVATE_KEY',
