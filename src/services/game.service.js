@@ -55,25 +55,22 @@ class GameService {
         game.status = "PENDING";
         await game.save();
 
-      // Check if Ape portfolio already exists for this game
-      const existingApePortfolio = await Portfolio.findOne({
-        gameId: gameId,
-        isApe: true,
-      });
-      
-      if (!existingApePortfolio) {
-        // Generate Ape's portfolio and update game
-        const apePortfolioId = await this.generateApePortfolio(
-          gameId,
-          gameType
-        );
-        game.apePortfolio = { portfolioId: apePortfolioId };
-        await game.save();
-      } else {
-        console.log(`Ape portfolio already exists for game ${gameId}, skipping generation`);
-        game.apePortfolio = { portfolioId: existingApePortfolio.portfolioId };
-        await game.save();
-      }
+        // Check if Ape portfolio already exists for this game
+        const existingApePortfolio = await Portfolio.findOne({
+          gameId: gameId,
+          isApe: true,
+        });
+
+        if (!existingApePortfolio) {
+          // Generate Ape's portfolio and update game
+          const apePortfolioId = await this.generateApePortfolio(gameId, gameType);
+          game.apePortfolio = { portfolioId: apePortfolioId };
+          await game.save();
+        } else {
+          console.log(`Ape portfolio already exists for game ${gameId}, skipping generation`);
+          game.apePortfolio = { portfolioId: existingApePortfolio.portfolioId };
+          await game.save();
+        }
       } catch (error) {
         // Update game status to FAILED and store error
         game.status = "FAILED";
@@ -110,8 +107,7 @@ class GameService {
       // Defensive validation for winCondition.config presence except for MARLOWE_BAINES type
       if (
         !gameCron.winCondition ||
-        (gameCron.winCondition.type !== "MARLOWE_BAINES" &&
-          !gameCron.winCondition.config)
+        (gameCron.winCondition.type !== "MARLOWE_BAINES" && !gameCron.winCondition.config)
       ) {
         throw new Error("Invalid gameCron: winCondition.config is required");
       }
@@ -119,15 +115,10 @@ class GameService {
       // Calculate startTime and endTime based on gameCron
       const startTime = new Date();
       startTime.setTime(startTime.getTime() + gameCron.startTime * 60 * 60 * 1000);
-      const endTime = new Date(
-        startTime.getTime() + gameCron.gameDuration * 60 * 60 * 1000
-      );
+      const endTime = new Date(startTime.getTime() + gameCron.gameDuration * 60 * 60 * 1000);
 
       // Get max gameId from DB for both DEFI and TRADFI
-      const maxGame = await Game.findOne({})
-        .sort({ gameId: -1 })
-        .select("gameId")
-        .lean();
+      const maxGame = await Game.findOne({}).sort({ gameId: -1 }).select("gameId").lean();
 
       const nextGameId = maxGame ? maxGame.gameId + 1 : 1 + 1;
 
@@ -192,9 +183,7 @@ class GameService {
       }
 
       // Predefined allocation values
-      const allocations = [
-        20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000,
-      ];
+      const allocations = [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000];
 
       // Map assets to allocations
       const portfolioAssets = formattedAssets.map((symbol, index) => {
@@ -207,9 +196,7 @@ class GameService {
         };
       });
 
-      const maxPortfolio = await Portfolio.findOne()
-        .sort({ portfolioId: -1 })
-        .select("portfolioId");
+      const maxPortfolio = await Portfolio.findOne().sort({ portfolioId: -1 }).select("portfolioId");
       const nextPortfolioId = maxPortfolio ? maxPortfolio.portfolioId + 1 : 1;
 
       // Create portfolio in database first
@@ -253,9 +240,7 @@ class GameService {
         .populate("userId")
         .sort({ createdAt: 1 });
 
-      const assetData = await Asset.find({ type: game.gameType }).select(
-        "currentPrice assetId"
-      );
+      const assetData = await Asset.find({ type: game.gameType }).select("currentPrice assetId");
 
       const currentPrices = assetData.reduce((acc, asset) => {
         acc[asset.assetId] = asset.currentPrice;
@@ -293,15 +278,11 @@ class GameService {
       });
 
       if (remainingPendingPortfolios > 0) {
-        console.log(
-          `Game ${game.gameId} has ${remainingPendingPortfolios} pending portfolios, not activating yet`
-        );
+        console.log(`Game ${game.gameId} has ${remainingPendingPortfolios} pending portfolios, not activating yet`);
         return;
       }
 
-      console.log(
-        `Game ${game.gameId} started with ${game.participantCount} participants`
-      );
+      console.log(`Game ${game.gameId} started with ${game.participantCount} participants`);
     } catch (error) {
       console.error("Error locking portfolios:", error);
       throw error;
@@ -340,8 +321,7 @@ class GameService {
       if (apePortfolio) {
         await apePortfolio.calculateValue(prices);
         game.apePortfolio.currentValue = apePortfolio.currentValue;
-        game.apePortfolio.performancePercentage =
-          apePortfolio.performancePercentage;
+        game.apePortfolio.performancePercentage = apePortfolio.performancePercentage;
         await game.save();
       }
 
@@ -385,15 +365,11 @@ class GameService {
           .populate("userId")
           .sort({ performancePercentage: -1 });
 
-        let winningPortfolios = lockedPortfolios.filter(
-          (portfolio) => portfolio.currentValue > apeCurrentValue
-        );
+        let winningPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue > apeCurrentValue);
 
         if (winningPortfolios.length === 0) {
           winningPortfolios = [apePortfolio];
-          console.log(
-            `Game ${game.gameId}: No other winners, apePortfolio is winner.`
-          );
+          console.log(`Game ${game.gameId}: No other winners, apePortfolio is winner.`);
         }
 
         const reward = totalPrizePool / BigInt(winningPortfolios.length);
@@ -443,9 +419,12 @@ class GameService {
         }
 
         // Mark losing portfolios
-        const losingPortfolios = lockedPortfolios.filter(
-          (portfolio) => portfolio.currentValue <= apeCurrentValue
-        );
+        const losingPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue <= apeCurrentValue);
+
+        // Update Ape portfolio status if there are winners
+        if (winningPortfolios.length > 0 && game.apePortfolio && game.apePortfolio.portfolioId) {
+          await Portfolio.updateOne({ portfolioId: game.apePortfolio.portfolioId }, { $set: { status: "LOST" } });
+        }
 
         for (const portfolio of losingPortfolios) {
           await Portfolio.updateOne(
@@ -460,6 +439,18 @@ class GameService {
               },
             }
           );
+
+          // Update user statistics for loser
+          const user = await User.findById(portfolio.userId._id);
+          if (user) {
+            await user.updateGameStats(
+              game.gameId,
+              portfolio.portfolioId,
+              portfolio.performancePercentage,
+              0,
+              winningPortfolios.length + 1
+            );
+          }
 
           const previousWins = await Portfolio.countDocuments({
             userId: portfolio.userId._id,
@@ -478,9 +469,7 @@ class GameService {
             },
           }).save();
         }
-        console.log(
-          `Game ${game.gameId}: Found ${winningPortfolios.length} winners.`
-        );
+        console.log(`Game ${game.gameId}: Found ${winningPortfolios.length} winners.`);
 
         game.hasCalculatedWinners = true;
         await game.markWinnerCalculated();
@@ -502,13 +491,10 @@ class GameService {
           .populate("userId")
           .sort({ performancePercentage: -1 });
 
-        const topWinnersPercentage =
-          game.winCondition.config.topWinnersPercentage;
+        const topWinnersPercentage = game.winCondition.config.topWinnersPercentage;
         const rewardPercentage = game.winCondition.config.rewardPercentage;
 
-        const topWinnersCount = Math.ceil(
-          (topWinnersPercentage / 100) * lockedPortfolios.length
-        );
+        const topWinnersCount = Math.ceil((topWinnersPercentage / 100) * lockedPortfolios.length);
 
         const winners = lockedPortfolios.slice(0, topWinnersCount);
 
@@ -516,8 +502,7 @@ class GameService {
         let rewardPerWinner = 0;
 
         if (topWinnersCount > 0 && rewardPercentage > 0 && totalPrizePool > 0) {
-          rewardTotal =
-            (totalPrizePool * BigInt(rewardPercentage)) / BigInt(100);
+          rewardTotal = (totalPrizePool * BigInt(rewardPercentage)) / BigInt(100);
           rewardPerWinner = rewardTotal / BigInt(topWinnersCount);
         }
 
@@ -582,6 +567,18 @@ class GameService {
             }
           );
 
+          // Update user statistics for loser
+          const user = await User.findById(portfolio.userId._id);
+          if (user) {
+            await user.updateGameStats(
+              game.gameId,
+              portfolio.portfolioId,
+              portfolio.performancePercentage,
+              0,
+              topWinnersCount + 1
+            );
+          }
+
           const previousWins = await Portfolio.countDocuments({
             userId: portfolio.userId._id,
             "gameOutcome.isWinner": true,
@@ -625,18 +622,13 @@ class GameService {
         const tiers = game.winCondition.config.tiers;
 
         // Validate sum of rewardPercentage < 100
-        const totalRewardPercentage = tiers.reduce(
-          (sum, tier) => sum + tier.rewardPercentage,
-          0
-        );
+        const totalRewardPercentage = tiers.reduce((sum, tier) => sum + tier.rewardPercentage, 0);
 
         if (totalRewardPercentage > 100) {
           game.status = "FAILED";
           game.error = `Total rewardPercentage of tiers must be less than 100, got ${totalRewardPercentage}`;
           await game.save();
-          throw new Error(
-            `Total rewardPercentage of tiers must be less than 100, got ${totalRewardPercentage}`
-          );
+          throw new Error(`Total rewardPercentage of tiers must be less than 100, got ${totalRewardPercentage}`);
         }
 
         // Prepare winners array
@@ -649,8 +641,7 @@ class GameService {
             continue;
           }
           const portfolio = lockedPortfolios[positionIndex];
-          const rewardAmount =
-            (totalPrizePool * BigInt(tier.rewardPercentage)) / BigInt(100);
+          const rewardAmount = (totalPrizePool * BigInt(tier.rewardPercentage)) / BigInt(100);
 
           winners.push({ portfolio, rewardAmount, rank: tier.position });
         }
@@ -713,6 +704,18 @@ class GameService {
             }
           );
 
+          // Update user statistics for loser
+          const user = await User.findById(portfolio.userId._id);
+          if (user) {
+            await user.updateGameStats(
+              game.gameId,
+              portfolio.portfolioId,
+              portfolio.performancePercentage,
+              0,
+              tiers.length + 1
+            );
+          }
+
           const previousWins = await Portfolio.countDocuments({
             userId: portfolio.userId._id,
             "gameOutcome.isWinner": true,
@@ -745,24 +748,13 @@ class GameService {
   }
 
   // Distribute rewards in batches
-  async distributeGameRewards(
-    game,
-    batchSize = 50,
-    retryCount = 0,
-    maxRetries = 20
-  ) {
+  async distributeGameRewards(game, batchSize = 50, retryCount = 0, maxRetries = 20) {
     try {
       let excludeId = null;
-      if (
-        game.winCondition.type === "MARLOWE_BAINES" &&
-        game.apePortfolio &&
-        game.apePortfolio.portfolioId
-      ) {
+      if (game.winCondition.type === "MARLOWE_BAINES" && game.apePortfolio && game.apePortfolio.portfolioId) {
         excludeId = game.apePortfolio.portfolioId;
       }
-      const undistributedWinners = game.winners.filter(
-        (w) => !w.isRewardDistributed && w.portfolioId !== excludeId
-      );
+      const undistributedWinners = game.winners.filter((w) => !w.isRewardDistributed && w.portfolioId !== excludeId);
 
       if (undistributedWinners.length === 0) {
         await game.markFullyDistributed();
@@ -784,9 +776,7 @@ class GameService {
           isApe: false,
         });
         if (!portfolio) {
-          console.warn(
-            `Portfolio not found for winner portfolioId: ${winner.portfolioId}`
-          );
+          console.warn(`Portfolio not found for winner portfolioId: ${winner.portfolioId}`);
           continue;
         }
         portfolioIds.push(winner.portfolioId);
@@ -795,9 +785,7 @@ class GameService {
       }
 
       if (portfolioIds.length === 0) {
-        console.warn(
-          "No valid portfolios found in batch for reward distribution."
-        );
+        console.warn("No valid portfolios found in batch for reward distribution.");
         await game.markFullyDistributed();
         game.status = "COMPLETED";
         await game.save();
@@ -805,11 +793,7 @@ class GameService {
       }
 
       // Call blockchain batchAssignRewards
-      const result = await blockchainService.batchAssignRewards(
-        game.gameId,
-        portfolioIds,
-        amounts
-      );
+      const result = await blockchainService.batchAssignRewards(game.gameId, portfolioIds, amounts);
 
       // Update portfolios and game winners as distributed
       for (const portfolioId of portfolioIds) {
@@ -824,31 +808,21 @@ class GameService {
       }
 
       for (const winner of batch) {
-        await game.markWinnerRewardDistributed(
-          winner._id,
-          result.transactionHash
-        );
+        await game.markWinnerRewardDistributed(winner._id, result.transactionHash);
       }
 
       // If more winners remain, recursively process next batch
       if (undistributedWinners.length > batchSize) {
         // Wait 1 second before next batch
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        return this.distributeGameRewards(
-          game,
-          batchSize,
-          retryCount,
-          maxRetries
-        );
+        return this.distributeGameRewards(game, batchSize, retryCount, maxRetries);
       }
 
       // All rewards distributed, mark game as COMPLETED
       game.status = "COMPLETED";
       await game.save();
 
-      console.log(
-        `Distributed rewards for game ${game.gameId} in batches. Processed ${portfolioIds.length} rewards.`
-      );
+      console.log(`Distributed rewards for game ${game.gameId} in batches. Processed ${portfolioIds.length} rewards.`);
     } catch (error) {
       console.error("Error distributing game rewards:", error);
       throw error;
@@ -887,9 +861,7 @@ class GameService {
         isLocked: true,
       });
 
-      const assetData = await Asset.find({ type: game.gameType }).select(
-        "currentPrice assetId"
-      );
+      const assetData = await Asset.find({ type: game.gameType }).select("currentPrice assetId");
 
       const currentPrices = assetData.reduce((acc, asset) => {
         acc[asset.assetId] = asset.currentPrice;
@@ -900,10 +872,7 @@ class GameService {
         try {
           await portfolio.calculateValue(currentPrices);
         } catch (error) {
-          console.error(
-            `Error updating portfolio ${portfolio._id} value:`,
-            error
-          );
+          console.error(`Error updating portfolio ${portfolio._id} value:`, error);
         }
       }
       console.log(`Updated values for ${portfolios.length} locked portfolios`);
@@ -941,25 +910,16 @@ class GameService {
 
           const currentValue = portfolio.currentValue.toFixed(6);
 
-          await blockchainService.updatePortfolioValue(
-            portfolio.portfolioId,
-            currentValue,
-            portfolio.gameId
-          );
+          await blockchainService.updatePortfolioValue(portfolio.portfolioId, currentValue, portfolio.gameId);
 
           portfolio.status = "AWAITING DECISION";
           await portfolio.save();
         } catch (error) {
-          console.error(
-            `Error updating blockchain value for portfolio ${portfolio._id}:`,
-            error
-          );
+          console.error(`Error updating blockchain value for portfolio ${portfolio._id}:`, error);
         }
       }
 
-      console.log(
-        `Updated blockchain values for ${portfolios.length} portfolios`
-      );
+      console.log(`Updated blockchain values for ${portfolios.length} portfolios`);
 
       const remainingPendingPortfolios = await Portfolio.countDocuments({
         status: "LOCKED",
@@ -967,9 +927,7 @@ class GameService {
       });
 
       if (remainingPendingPortfolios > 0) {
-        console.log(
-          `Game ${gameId} has ${remainingPendingPortfolios} locked portfolios, not activating yet`
-        );
+        console.log(`Game ${gameId} has ${remainingPendingPortfolios} locked portfolios, not activating yet`);
         return;
       }
 
