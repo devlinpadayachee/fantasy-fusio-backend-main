@@ -174,6 +174,7 @@ const authController = {
         totalGamesPlayed: user.totalGamesPlayed,
         totalPortfoliosCreated: user.totalPortfoliosCreated,
         gamesWon: user.gamesWon,
+        uniqueGamesWon: user.uniqueGamesWon,
         totalEarnings: user.totalEarnings,
       },
     });
@@ -208,6 +209,7 @@ const authController = {
         totalGamesPlayed: user.totalGamesPlayed,
         totalPortfoliosCreated: user.totalPortfoliosCreated,
         gamesWon: user.gamesWon,
+        uniqueGamesWon: user.uniqueGamesWon,
         totalEarnings: user.totalEarnings,
         currentBalance: currentBalance, // Return blockchain balance
         lockedBalance: user.lockedBalance,

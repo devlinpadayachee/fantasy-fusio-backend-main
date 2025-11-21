@@ -32,6 +32,10 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    uniqueGamesWon: {
+      type: Number,
+      default: 0,
+    },
     totalPortfoliosCreated: {
       type: Number,
       default: 0,
@@ -141,6 +145,16 @@ userSchema.methods.updateGameStats = async function (gameId, portfolioId, perfor
     if (parsedEarnings > 0) {
       this.gamesWon += 1;
       this.totalEarnings = (this.totalEarnings || 0) + parsedEarnings;
+
+      // Check if this is a new unique game win
+      // Look for other winning entries for this same gameId
+      const alreadyWonGame = this.gameHistory.some(
+        (entry) => entry.gameId === Number(gameId) && entry.portfolioId !== Number(portfolioId) && entry.earnings > 0
+      );
+
+      if (!alreadyWonGame) {
+        this.uniqueGamesWon = (this.uniqueGamesWon || 0) + 1;
+      }
     }
     return this.save();
   } catch (error) {
