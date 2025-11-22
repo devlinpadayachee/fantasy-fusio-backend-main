@@ -569,6 +569,7 @@ const gameController = {
 
   // Get USDC balance for the user
   getBalanceApproval: asyncHandler(async (req, res) => {
+    const ethers = require('ethers');
     const { gameId } = req.params;
     const userAddress = req.user.address;
     try {
@@ -577,7 +578,18 @@ const gameController = {
         userAddress,
         gameId
       );
-      res.json({ balance, requiredApproval });
+
+      // Helper function to convert wei to USDC dollars
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        const weiStr = String(weiValue);
+        return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+      };
+
+      res.json({
+        balance: weiToUSDC(balance),
+        requiredApproval: typeof requiredApproval === 'object' ? weiToUSDC(requiredApproval.requiredAmount || requiredApproval) : weiToUSDC(requiredApproval)
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -585,10 +597,19 @@ const gameController = {
 
   // Get USDC balance for the user
   getUSDCBalance: asyncHandler(async (req, res) => {
+    const ethers = require('ethers');
     const address = req.user.wallet;
     try {
       const balance = await blockchainService.getUSDCBalance(address);
-      res.json({ balance });
+
+      // Helper function to convert wei to USDC dollars
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        const weiStr = String(weiValue);
+        return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+      };
+
+      res.json({ balance: weiToUSDC(balance) });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

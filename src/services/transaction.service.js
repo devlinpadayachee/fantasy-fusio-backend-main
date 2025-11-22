@@ -312,12 +312,22 @@ class TransactionService {
         }
       }
 
+      // Get wallet balance in wei
+      const walletBalanceWei = await blockchainService.getUSDCBalance(user.address);
+
+      // Helper function to convert wei to USDC dollars
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        const weiStr = String(weiValue);
+        return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+      };
+
       return {
-        totalWinnings: user.totalEarnings || "0",
-        withdrawableBalance: withdrawableBalance || "0",
-        lockedBalance: totalLockedWei.toString(), // Sum of actual entry fees for locked portfolios
-        lossBalance: totalLossWei.toString(), // Sum of actual entry fees for lost portfolios
-        walletBalance: await blockchainService.getUSDCBalance(user.address),
+        totalWinnings: weiToUSDC(user.totalEarnings),
+        withdrawableBalance: weiToUSDC(withdrawableBalance),
+        lockedBalance: weiToUSDC(totalLockedWei.toString()),
+        lossBalance: weiToUSDC(totalLossWei.toString()),
+        walletBalance: weiToUSDC(walletBalanceWei),
       };
     } catch (error) {
       console.error("Error getting withdrawal info:", error);

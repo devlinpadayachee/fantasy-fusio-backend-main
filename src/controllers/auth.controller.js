@@ -93,6 +93,13 @@ const authController = {
         }
       );
 
+      // Helper function to convert wei to USDC dollars
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        const weiStr = String(weiValue);
+        return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+      };
+
       res.json({
         token,
         user: {
@@ -104,9 +111,9 @@ const authController = {
           totalPortfoliosCreated: user.totalPortfoliosCreated,
           gamesWon: user.gamesWon,
           uniqueGamesWon: user.uniqueGamesWon,
-          totalEarnings: user.totalEarnings,
-          currentBalance: user.currentBalance,
-          lockedBalance: user.lockedBalance,
+          totalEarnings: weiToUSDC(user.totalEarnings),
+          currentBalance: weiToUSDC(user.currentBalance),
+          lockedBalance: weiToUSDC(user.lockedBalance),
         },
       });
     } catch (error) {
@@ -167,6 +174,13 @@ const authController = {
 
     await user.save();
 
+    // Helper function to convert wei to USDC dollars
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
     res.json({
       user: {
         id: user._id,
@@ -177,7 +191,7 @@ const authController = {
         totalPortfoliosCreated: user.totalPortfoliosCreated,
         gamesWon: user.gamesWon,
         uniqueGamesWon: user.uniqueGamesWon,
-        totalEarnings: user.totalEarnings,
+        totalEarnings: weiToUSDC(user.totalEarnings),
       },
     });
   }),

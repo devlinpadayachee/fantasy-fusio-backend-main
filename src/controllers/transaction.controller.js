@@ -166,17 +166,25 @@ const transactionController = {
 
     // Get user balance
     getUserBalance: asyncHandler(async (req, res) => {
+        const ethers = require('ethers');
         const userId = req.user._id;
         const user = await User.findById(userId);
 
         const balance = await blockchainService.getUSDCBalance(user.address);
         const allowance = await blockchainService.checkUSDCAllowance(user.address);
 
+        // Helper function to convert wei to USDC dollars
+        const weiToUSDC = (weiValue) => {
+            if (!weiValue) return 0;
+            const weiStr = String(weiValue);
+            return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+        };
+
         res.json({
-            balance,
-            allowance: allowance.currentAllowance,
-            lockedBalance: user.lockedBalance,
-            requiredAllowance: allowance.requiredAmount,
+            balance: weiToUSDC(balance),
+            allowance: weiToUSDC(allowance.currentAllowance),
+            lockedBalance: weiToUSDC(user.lockedBalance),
+            requiredAllowance: weiToUSDC(allowance.requiredAmount),
             needsApproval: allowance.needsApproval
         });
     }),
