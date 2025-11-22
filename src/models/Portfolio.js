@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const portfolioSchema = new mongoose.Schema(
   {
@@ -45,8 +45,8 @@ const portfolioSchema = new mongoose.Schema(
         default: false,
       },
       reward: {
-        type: Number,
-        default: 0,
+        type: String,
+        default: "0",
       },
       rank: {
         type: Number,
@@ -137,7 +137,7 @@ portfolioSchema.index({ portfolioId: 1 });
 portfolioSchema.index({ userId: 1 });
 portfolioSchema.index({ gameId: 1 });
 portfolioSchema.index({ status: 1 });
-portfolioSchema.index({ 'assets.assetId': 1 });
+portfolioSchema.index({ "assets.assetId": 1 });
 
 // Methods
 portfolioSchema.methods.calculateValue = async function (prices) {
@@ -146,13 +146,12 @@ portfolioSchema.methods.calculateValue = async function (prices) {
   for (const asset of this.assets) {
     const price = prices[asset.assetId];
     if (price) {
-      totalValue += price * (asset.tokenQty);
+      totalValue += price * asset.tokenQty;
     }
   }
 
   const currentValue = totalValue;
-  const performancePercentage =
-    ((totalValue - this.initialValue) / this.initialValue) * 100;
+  const performancePercentage = ((totalValue - this.initialValue) / this.initialValue) * 100;
 
   // Prepare new value history entry
   const newValueEntry = {
@@ -161,7 +160,7 @@ portfolioSchema.methods.calculateValue = async function (prices) {
   };
 
   // Use atomic update to avoid version conflicts
-  return mongoose.model('Portfolio').findOneAndUpdate(
+  return mongoose.model("Portfolio").findOneAndUpdate(
     { _id: this._id },
     {
       $set: {
@@ -182,62 +181,66 @@ portfolioSchema.methods.calculateValue = async function (prices) {
 portfolioSchema.methods.lock = function (transactionHash) {
   this.isLocked = true;
   this.lockedAt = new Date();
-  this.status = 'ACTIVE';
+  this.status = "ACTIVE";
   this.transactionHash = transactionHash;
   return this.save();
 };
 
 portfolioSchema.methods.markAsWinner = async function (reward, rank) {
-  this.status = 'WON';
+  this.status = "WON";
   this.gameOutcome = {
     isWinner: true,
     reward,
     rank,
-    settledAt: new Date()
+    settledAt: new Date(),
   };
   return this.save();
 };
 
 portfolioSchema.methods.markAsLoser = async function (rank) {
-  this.status = 'LOST';
+  this.status = "LOST";
   this.gameOutcome = {
     isWinner: false,
-    reward: 0,
+    reward: "0",
     rank,
-    settledAt: new Date()
+    settledAt: new Date(),
   };
   return this.save();
 };
 
 portfolioSchema.methods.complete = function () {
   if (!this.gameOutcome) {
-    this.status = 'COMPLETED';
+    this.status = "COMPLETED";
   }
   return this.save();
 };
 
 // Static method to get winners for a game
-portfolioSchema.statics.getGameWinners = function(gameId) {
+portfolioSchema.statics.getGameWinners = function (gameId) {
   return this.find({
     gameId,
-    status: 'WON'
-  }).sort({ 'gameOutcome.rank': 1 }).populate('userId');
+    status: "WON",
+  })
+    .sort({ "gameOutcome.rank": 1 })
+    .populate("userId");
 };
 
 // Static method to get all settled portfolios for a game
-portfolioSchema.statics.getSettledPortfolios = function(gameId) {
+portfolioSchema.statics.getSettledPortfolios = function (gameId) {
   return this.find({
     gameId,
-    status: { $in: ['WON', 'LOST'] }
-  }).sort({ 'gameOutcome.rank': 1 }).populate('userId');
+    status: { $in: ["WON", "LOST"] },
+  })
+    .sort({ "gameOutcome.rank": 1 })
+    .populate("userId");
 };
 
 // Statics
 portfolioSchema.statics.getActivePortfolios = function (gameId) {
   return this.find({
     gameId,
-    status: 'ACTIVE',
-  }).populate('userId', 'username');
+    status: "ACTIVE",
+  }).populate("userId", "username");
 };
 
 portfolioSchema.statics.getUserPortfolios = function (userId, gameType) {
@@ -248,37 +251,27 @@ portfolioSchema.statics.getUserPortfolios = function (userId, gameType) {
   return this.find(query).sort({ createdAt: -1 });
 };
 
-portfolioSchema.statics.getPortfoliosByGameType = function (
-  gameType,
-  status,
-  userId
-) {
+portfolioSchema.statics.getPortfoliosByGameType = function (gameType, status, userId) {
   const query = { gameType };
   if (status) {
     query.status = status;
   }
-  return this.find(query)
-    .populate('userId', 'username profileImage')
-    .sort({ performancePercentage: -1 })
-    .exec();
+  return this.find(query).populate("userId", "username profileImage").sort({ performancePercentage: -1 }).exec();
 };
 
-portfolioSchema.statics.getPortfolioRank = async function (
-  portfolioId,
-  gameType
-) {
+portfolioSchema.statics.getPortfolioRank = async function (portfolioId, gameType) {
   const portfolio = await this.findById(portfolioId);
   if (!portfolio) return null;
 
   const betterPerformers = await this.countDocuments({
     gameType,
-    status: 'LOCKED',
+    status: "LOCKED",
     performancePercentage: { $gt: portfolio.performancePercentage },
   });
 
   return betterPerformers + 1;
 };
 
-const Portfolio = mongoose.model('Portfolio', portfolioSchema);
+const Portfolio = mongoose.model("Portfolio", portfolioSchema);
 
 module.exports = Portfolio;

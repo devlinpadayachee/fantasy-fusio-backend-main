@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema(
   {
@@ -14,23 +14,15 @@ const transactionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: [
-        "ENTRY_FEE",
-        "ADMIN_FEE",
-        "CREATE_PORTFOLIO",
-        "GAS_FEE",
-        "REWARD",
-        "WITHDRAWAL",
-        "REFUND",
-      ],
+      enum: ["ENTRY_FEE", "ADMIN_FEE", "CREATE_PORTFOLIO", "GAS_FEE", "REWARD", "WITHDRAWAL", "REFUND"],
       required: true,
     },
     amount: {
-      type: Number,
+      type: String,
       required: true,
     },
     adminFee: {
-      type: Number,
+      type: String, // Wei amount - must be String for precision
       required: false,
     },
     gameId: {
@@ -65,15 +57,15 @@ const transactionSchema = new mongoose.Schema(
       lowercase: true,
     },
     gasUsed: {
-      type: Number,
+      type: String,
       required: true,
     },
     gasPrice: {
-      type: Number,
+      type: String,
       required: true,
     },
     networkFee: {
-      type: Number,
+      type: String,
       required: true,
     },
     error: {
@@ -102,59 +94,55 @@ transactionSchema.index({ fromAddress: 1 });
 transactionSchema.index({ toAddress: 1 });
 
 // Methods
-transactionSchema.methods.complete = async function() {
-    this.status = 'COMPLETED';
-    return this.save();
+transactionSchema.methods.complete = async function () {
+  this.status = "COMPLETED";
+  return this.save();
 };
 
-transactionSchema.methods.fail = async function(error) {
-    this.status = 'FAILED';
-    this.error = error;
-    return this.save();
+transactionSchema.methods.fail = async function (error) {
+  this.status = "FAILED";
+  this.error = error;
+  return this.save();
 };
 
-transactionSchema.methods.calculateNetworkFee = function() {
-    return this.gasUsed * this.gasPrice;
+transactionSchema.methods.calculateNetworkFee = function () {
+  return (BigInt(this.gasUsed) * BigInt(this.gasPrice)).toString();
 };
 
 // Statics
-transactionSchema.statics.getUserTransactions = function(userId, limit = 50) {
-    return this.find({ userId })
-        .sort({ blockTimestamp: -1 })
-        .limit(limit);
+transactionSchema.statics.getUserTransactions = function (userId, limit = 50) {
+  return this.find({ userId }).sort({ blockTimestamp: -1 }).limit(limit);
 };
 
-transactionSchema.statics.getGameTransactions = function(gameId) {
-    return this.find({ gameId })
-        .sort({ blockTimestamp: -1 });
+transactionSchema.statics.getGameTransactions = function (gameId) {
+  return this.find({ gameId }).sort({ blockTimestamp: -1 });
 };
 
-transactionSchema.statics.getPendingTransactions = function() {
-    return this.find({ status: 'PENDING' })
-        .sort({ blockTimestamp: 1 });
+transactionSchema.statics.getPendingTransactions = function () {
+  return this.find({ status: "PENDING" }).sort({ blockTimestamp: 1 });
 };
 
-transactionSchema.statics.createEntryFeeTransaction = async function(data) {
-    return this.create({
-        ...data,
-        type: 'ENTRY_FEE',
-        networkFee: data.gasUsed * data.gasPrice
-    });
+transactionSchema.statics.createEntryFeeTransaction = async function (data) {
+  return this.create({
+    ...data,
+    type: "ENTRY_FEE",
+    networkFee: (BigInt(data.gasUsed) * BigInt(data.gasPrice)).toString(),
+  });
 };
 
-transactionSchema.statics.createRewardTransaction = async function(data) {
-    return this.create({
-        ...data,
-        type: 'REWARD',
-        networkFee: data.gasUsed * data.gasPrice
-    });
+transactionSchema.statics.createRewardTransaction = async function (data) {
+  return this.create({
+    ...data,
+    type: "REWARD",
+    networkFee: (BigInt(data.gasUsed) * BigInt(data.gasPrice)).toString(),
+  });
 };
 
 // Virtual fields
-transactionSchema.virtual('totalCost').get(function() {
-    return this.amount + this.networkFee;
+transactionSchema.virtual("totalCost").get(function () {
+  return (BigInt(this.amount || "0") + BigInt(this.networkFee || "0")).toString();
 });
 
-const Transaction = mongoose.model('Transaction', transactionSchema);
+const Transaction = mongoose.model("Transaction", transactionSchema);
 
 module.exports = Transaction;

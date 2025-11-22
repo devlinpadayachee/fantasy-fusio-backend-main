@@ -73,14 +73,22 @@ exports.getApeAssets = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/games
 // @access  Admin
 exports.getAllGames = asyncHandler(async (req, res) => {
+  const ethers = require("ethers");
   const games = await Game.find({}).sort({ createdAt: -1 });
+
+  // Helper function to convert wei to USDC dollars
+  const weiToUSDC = (weiValue) => {
+    if (!weiValue) return 0;
+    const weiStr = String(weiValue);
+    return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+  };
 
   const formattedGames = games.map((game, index) => ({
     srNo: index + 1,
     _id: game._id,
     gameTitle: `${game.name} #${game.gameId}`,
     gameMode: game.gameType,
-    prizePool: game.totalPrizePool,
+    prizePool: weiToUSDC(game.totalPrizePool), // Convert to dollars
     totalParticipants: game.participantCount,
     startTime: game.startTime,
     endTime: game.endTime,
@@ -102,16 +110,24 @@ exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
     query.gameCronId = gameCronId;
   }
 
+  const ethers = require("ethers");
   const games = await Game.find(query)
     .populate("gameCronId", "customGameName creationTime")
     .sort({ createdAt: -1 });
+
+  // Helper function to convert wei to USDC dollars
+  const weiToUSDC = (weiValue) => {
+    if (!weiValue) return 0;
+    const weiStr = String(weiValue);
+    return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+  };
 
   const formattedGames = games.map((game, index) => ({
     srNo: index + 1,
     _id: game._id,
     gameTitle: `${game.name} #${game.gameId}`,
     gameMode: game.gameType,
-    prizePool: game.totalPrizePool,
+    prizePool: weiToUSDC(game.totalPrizePool), // Convert to dollars
     totalParticipants: game.participantCount,
     startTime: game.startTime,
     endTime: game.endTime,
@@ -215,16 +231,25 @@ exports.getAllPortfolios = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/users
 // @access  Admin
 exports.getAllUsers = asyncHandler(async (req, res) => {
+  const ethers = require("ethers");
   const users = await User.find({}).sort({ createdAt: -1 });
+
+  // Helper function to convert wei to USDC dollars
+  const weiToUSDC = (weiValue) => {
+    if (!weiValue) return 0;
+    const weiStr = String(weiValue);
+    return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+  };
 
   const formattedUsers = users.map((user, index) => ({
     srNo: index + 1,
     username: user.username || "N/A",
     walletAddress: user.address,
     gamesWon: user.gamesWon || 0,
-    earnings: user.totalEarnings || 0,
-    lockedAmount: user.lockedBalance || 0,
+    totalEarnings: weiToUSDC(user.totalEarnings),
+    lockedBalance: weiToUSDC(user.lockedBalance),
     createdAt: user.createdAt,
+    lastLogin: user.lastLogin,
   }));
 
   res.json(formattedUsers);
@@ -262,20 +287,29 @@ exports.getAllTransactions = asyncHandler(async (req, res) => {
     transactionQuery.status = status;
   }
 
+  const ethers = require("ethers");
   const transactions = await Transaction.find(transactionQuery).sort({
     createdAt: -1,
   });
 
+  // Helper function to convert wei to USDC dollars
+  const weiToUSDC = (weiValue) => {
+    if (!weiValue) return 0;
+    const weiStr = String(weiValue);
+    return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+  };
+
   const formattedTransactions = transactions.map((transaction, index) => ({
-    srNo: index + 1,
+    id: index + 1,
     transactionHash: transaction.transactionHash,
     type: transaction.type,
-    amount: transaction.amount,
+    amount: weiToUSDC(transaction.amount), // Convert to dollars
     portfolioId: transaction.portfolioId || "N/A",
     fromAddress: transaction.fromAddress,
     toAddress: transaction.toAddress,
-    networkFees: transaction.networkFee,
+    networkFees: weiToUSDC(transaction.networkFee), // Convert to dollars
     status: transaction.status,
+    createdAt: transaction.createdAt,
   }));
 
   res.json(formattedTransactions);

@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const gameSchema = new mongoose.Schema(
   {
@@ -58,8 +58,8 @@ const gameSchema = new mongoose.Schema(
       required: true,
     },
     totalPrizePool: {
-      type: Number,
-      default: 0,
+      type: String,
+      default: "0",
     },
     participantCount: {
       type: Number,
@@ -77,7 +77,7 @@ const gameSchema = new mongoose.Schema(
     },
     gameCronId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'GameCron',
+      ref: "GameCron",
       required: false,
       index: true,
     },
@@ -106,7 +106,7 @@ const gameSchema = new mongoose.Schema(
           ref: "User",
         },
         portfolioId: Number,
-        reward: Number,
+        reward: String, // Wei amount - must be String for precision
         performancePercentage: Number,
         isRewardDistributed: {
           type: Boolean,
@@ -135,96 +135,98 @@ gameSchema.index({ status: 1 });
 gameSchema.index({ gameType: 1 });
 
 // Methods
-gameSchema.methods.updatePrizePool = function(amount) {
-    this.totalPrizePool += amount;
-    return this.save();
+gameSchema.methods.updatePrizePool = function (amount) {
+  const currentPool = BigInt(this.totalPrizePool || "0");
+  const addAmount = BigInt(amount);
+  this.totalPrizePool = (currentPool + addAmount).toString();
+  return this.save();
 };
 
-gameSchema.methods.incrementParticipants = function() {
-    this.participantCount += 1;
-    return this.save();
+gameSchema.methods.incrementParticipants = function () {
+  this.participantCount += 1;
+  return this.save();
 };
 
-gameSchema.methods.updateApePortfolio = function(currentValue) {
-    this.apePortfolio.currentValue = currentValue;
-    this.apePortfolio.performancePercentage = 
-        ((currentValue - this.apePortfolio.initialValue) / this.apePortfolio.initialValue) * 100;
-    return this.save();
+gameSchema.methods.updateApePortfolio = function (currentValue) {
+  this.apePortfolio.currentValue = currentValue;
+  this.apePortfolio.performancePercentage =
+    ((currentValue - this.apePortfolio.initialValue) / this.apePortfolio.initialValue) * 100;
+  return this.save();
 };
 
-gameSchema.methods.addWinner = function(userId, portfolioId, reward, performancePercentage) {
-    this.winners.push({
-        userId,
-        portfolioId,
-        reward,
-        performancePercentage
-    });
-    return this.save();
+gameSchema.methods.addWinner = function (userId, portfolioId, reward, performancePercentage) {
+  this.winners.push({
+    userId,
+    portfolioId,
+    reward,
+    performancePercentage,
+  });
+  return this.save();
 };
 
 // Statics
-gameSchema.statics.getCurrentGame = function(gameType) {
-    return this.findOne({
-        gameType,
-        status: { 
-            $in: ['ACTIVE', 'CALCULATING_WINNERS']
-        }
-    });
+gameSchema.statics.getCurrentGame = function (gameType) {
+  return this.findOne({
+    gameType,
+    status: {
+      $in: ["ACTIVE", "CALCULATING_WINNERS"],
+    },
+  });
 };
 
-gameSchema.statics.getGamesNeedingWinnerCalculation = function() {
-    return this.find({
-        status: 'ACTIVE',
-        endTime: { $lte: new Date() },
-        hasCalculatedWinners: false
-    });
+gameSchema.statics.getGamesNeedingWinnerCalculation = function () {
+  return this.find({
+    status: "ACTIVE",
+    endTime: { $lte: new Date() },
+    hasCalculatedWinners: false,
+  });
 };
 
-gameSchema.statics.getGamesNeedingRewardDistribution = function() {
-    return this.find({
-        status: 'CALCULATING_WINNERS',
-        hasCalculatedWinners: true,
-        isFullyDistributed: false
-    });
+gameSchema.statics.getGamesNeedingRewardDistribution = function () {
+  return this.find({
+    status: "CALCULATING_WINNERS",
+    hasCalculatedWinners: true,
+    isFullyDistributed: false,
+  });
 };
 
-gameSchema.methods.markWinnerCalculated = async function() {
-    this.hasCalculatedWinners = true;
-    this.status = 'CALCULATING_WINNERS';
-    return this.save();
+gameSchema.methods.markWinnerCalculated = async function () {
+  this.hasCalculatedWinners = true;
+  this.status = "CALCULATING_WINNERS";
+  return this.save();
 };
 
-gameSchema.methods.markWinnerRewardDistributed = async function(winnerId, transactionHash) {
-    const winner = this.winners.id(winnerId);
-    if (winner) {
-        winner.isRewardDistributed = true;
-        winner.distributionTransactionHash = transactionHash;
-    }
-    return this.save();
+gameSchema.methods.markWinnerRewardDistributed = async function (winnerId, transactionHash) {
+  const winner = this.winners.id(winnerId);
+  if (winner) {
+    winner.isRewardDistributed = true;
+    winner.distributionTransactionHash = transactionHash;
+  }
+  return this.save();
 };
 
-gameSchema.methods.markFullyDistributed = async function() {
-    this.isFullyDistributed = true;
-    this.status = 'DISTRIBUTING_REWARDS';
-    return this.save();
+gameSchema.methods.markFullyDistributed = async function () {
+  this.isFullyDistributed = true;
+  this.status = "DISTRIBUTING_REWARDS";
+  return this.save();
 };
 
-gameSchema.statics.getPendingGame = function(gameType) {
-    return this.findOne({
-        gameType,
-        status: 'PENDING'
-    });
+gameSchema.statics.getPendingGame = function (gameType) {
+  return this.findOne({
+    gameType,
+    status: "PENDING",
+  });
 };
 
-gameSchema.statics.getNotCompletedGame = function(gameType) {
-    return this.findOne({
-        gameType,
-        status: {
-            $in: ['PENDING', 'ACTIVE', 'CALCULATING_WINNERS', 'UPDATE_VALUES', 'DISTRIBUTING_REWARDS']
-        }
-    });
+gameSchema.statics.getNotCompletedGame = function (gameType) {
+  return this.findOne({
+    gameType,
+    status: {
+      $in: ["PENDING", "ACTIVE", "CALCULATING_WINNERS", "UPDATE_VALUES", "DISTRIBUTING_REWARDS"],
+    },
+  });
 };
 
-const Game = mongoose.model('Game', gameSchema);
+const Game = mongoose.model("Game", gameSchema);
 
 module.exports = Game;

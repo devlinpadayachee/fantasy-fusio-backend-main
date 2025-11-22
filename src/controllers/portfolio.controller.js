@@ -101,10 +101,42 @@ const portfolioController = {
       })
     );
 
+    // Helper function to convert wei to USDC dollars
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
+    // Convert wei values in game object
+    const gameObj = game.toObject();
+    gameObj.totalPrizePool = weiToUSDC(gameObj.totalPrizePool);
+
+    // Convert wei values in all portfolios
+    const convertedAllPortfolios = allPortfolios.map(p => {
+      const portfolioObj = p.toObject ? p.toObject() : p;
+      return {
+        ...portfolioObj,
+        gameOutcome: portfolioObj.gameOutcome ? {
+          ...portfolioObj.gameOutcome,
+          reward: weiToUSDC(portfolioObj.gameOutcome.reward),
+        } : undefined,
+      };
+    });
+
+    // Convert wei values in user portfolios
+    const convertedUserPortfolios = enrichedPortfolios.map(p => ({
+      ...p,
+      gameOutcome: p.gameOutcome ? {
+        ...p.gameOutcome,
+        reward: weiToUSDC(p.gameOutcome.reward),
+      } : undefined,
+    }));
+
     res.json({
-      game,
-      portfolios: allPortfolios,
-      userPortfolios: userId ? enrichedPortfolios : [],
+      game: gameObj,
+      portfolios: convertedAllPortfolios,
+      userPortfolios: userId ? convertedUserPortfolios : [],
     });
   }),
 

@@ -32,7 +32,7 @@ const transactionController = {
     // Process reward distribution
     processRewardDistribution: asyncHandler(async (req, res) => {
         const { gameId } = req.params;
-        
+
         // Only admin can trigger reward distribution
         if (!req.user.isAdmin) {
             return res.status(403).json({ error: 'Unauthorized' });
@@ -59,8 +59,8 @@ const transactionController = {
 
         res.json({
             transaction,
-            message: transaction.status === 'PENDING' 
-                ? 'Withdrawal transaction is being processed' 
+            message: transaction.status === 'PENDING'
+                ? 'Withdrawal transaction is being processed'
                 : transaction.status === 'COMPLETED'
                     ? 'Withdrawal processed successfully'
                     : 'Withdrawal transaction failed'
@@ -69,6 +69,7 @@ const transactionController = {
 
     // Get transaction history
     getTransactionHistory: asyncHandler(async (req, res) => {
+        const ethers = require('ethers');
         const userId = req.user._id;
         const {
             page = 1,
@@ -88,8 +89,24 @@ const transactionController = {
             endDate
         });
 
+        // Helper function to convert wei to USDC dollars
+        const weiToUSDC = (weiValue) => {
+            if (!weiValue) return 0;
+            const weiStr = String(weiValue);
+            return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+        };
+
+        // Convert wei values to USDC in transactions
+        const formattedTransactions = result.transactions.map(tx => ({
+            ...tx.toObject ? tx.toObject() : tx,
+            amount: weiToUSDC(tx.amount),
+            networkFee: weiToUSDC(tx.networkFee),
+            adminFee: weiToUSDC(tx.adminFee),
+            gasPrice: weiToUSDC(tx.gasPrice),
+        }));
+
         res.json({
-            transactions: result.transactions,
+            transactions: formattedTransactions,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -173,22 +190,22 @@ const transactionController = {
         const stats = {
             totalTransactions: await Transaction.countDocuments({ userId }),
             totalVolume: user.totalEarnings,
-            successfulTransactions: await Transaction.countDocuments({ 
-                userId, 
-                status: 'COMPLETED' 
+            successfulTransactions: await Transaction.countDocuments({
+                userId,
+                status: 'COMPLETED'
             }),
-            failedTransactions: await Transaction.countDocuments({ 
-                userId, 
-                status: 'FAILED' 
+            failedTransactions: await Transaction.countDocuments({
+                userId,
+                status: 'FAILED'
             }),
-            pendingTransactions: await Transaction.countDocuments({ 
-                userId, 
-                status: 'PENDING' 
+            pendingTransactions: await Transaction.countDocuments({
+                userId,
+                status: 'PENDING'
             }),
             transactionsByType: await Transaction.aggregate([
                 { $match: { userId: user._id } },
-                { $group: { 
-                    _id: '$type', 
+                { $group: {
+                    _id: '$type',
                     count: { $sum: 1 },
                     volume: { $sum: '$amount' }
                 }}

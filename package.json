@@ -9,7 +9,13 @@
     "test": "jest --detectOpenHandles",
     "lint": "eslint src/**/*.js",
     "format": "prettier --write 'src/**/*.js'",
-    "seed:assets": "node src/scripts/initializeAssets.js"
+    "seed:assets": "node src/scripts/initializeAssets.js",
+    "db:backup": "node scripts/backup-database.js",
+    "db:restore": "node scripts/restore-database.js",
+    "test:conversions": "node scripts/test-string-conversions.js",
+    "migrate:check": "node scripts/check-migration-status.js",
+    "migrate:run": "node scripts/migrate-wei-to-string.js",
+    "migrate:rollback": "node scripts/rollback-wei-migration.js"
   },
   "dependencies": {
     "aws-sdk": "^2.1692.0",

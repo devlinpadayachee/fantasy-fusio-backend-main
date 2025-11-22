@@ -1,51 +1,34 @@
-const { ethers } = require('ethers');
-const config = require('../config');
-const transactionQueue = require('./transaction-queue.service');
-const FusioFantasyGameV2 = require('../config/FusioFantasyGameV2.json');
-const USDC = require('../config/MockUSDC.json');
-const Transaction = require('../models/Transaction');
-const User = require('../models/User');
+const { ethers } = require("ethers");
+const config = require("../config");
+const transactionQueue = require("./transaction-queue.service");
+const FusioFantasyGameV2 = require("../config/FusioFantasyGameV2.json");
+const USDC = require("../config/MockUSDC.json");
+const Transaction = require("../models/Transaction");
+const User = require("../models/User");
 
 class BlockchainService {
   constructor() {
-    this.provider = new ethers.providers.JsonRpcProvider(
-      config.blockchain.rpcUrl,
-      56
-    );
+    this.provider = new ethers.providers.JsonRpcProvider(config.blockchain.rpcUrl, 56);
 
     // Setup admin wallet
-    this.adminWallet = new ethers.Wallet(
-      config.blockchain.privateKey,
-      this.provider
-    );
+    this.adminWallet = new ethers.Wallet(config.blockchain.privateKey, this.provider);
 
     // Initialize transaction queue
     transactionQueue.initialize(this.provider, this.adminWallet);
 
     // Setup contract instances
-    this.contract = new ethers.Contract(
-      config.blockchain.contractAddress,
-      FusioFantasyGameV2.abi,
-      this.adminWallet
-    );
+    this.contract = new ethers.Contract(config.blockchain.contractAddress, FusioFantasyGameV2.abi, this.adminWallet);
 
-    this.usdcContract = new ethers.Contract(
-      config.blockchain.usdcAddress,
-      USDC.abi,
-      this.adminWallet
-    );
+    this.usdcContract = new ethers.Contract(config.blockchain.usdcAddress, USDC.abi, this.adminWallet);
 
     // Constants
-    this.ENTRY_FEE = ethers.utils.parseUnits("5", 18); // 5 USDC
-    this.GAS_FEE = ethers.utils.parseUnits("0.1", 18); // 0.1 USDC
+    // ENTRY_FEE is now dynamic - retrieved from game
+    this.GAS_FEE = ethers.utils.parseUnits("0.1", 18); // 0.1 USDC (can be made dynamic later)
   }
 
-  async checkUSDCAllowance(userAddress,gameId) {
+  async checkUSDCAllowance(userAddress, gameId) {
     try {
-      const requiredAmount = await this.contract.getRequiredUSDCApproval(
-        userAddress,
-        gameId
-      );
+      const requiredAmount = await this.contract.getRequiredUSDCApproval(userAddress, gameId);
       return requiredAmount.toString();
     } catch (error) {
       throw new Error(`Failed to check USDC allowance: ${error.message}`);
@@ -55,6 +38,7 @@ class BlockchainService {
   async getUSDCBalance(address) {
     try {
       const balance = await this.usdcContract.balanceOf(address);
+      // Return raw wei value as string for consistent DB storage
       return balance.toString();
     } catch (error) {
       throw new Error(`Failed to get USDC balance: ${error.message}`);
@@ -64,21 +48,26 @@ class BlockchainService {
   // Helper function to sign messages
   async signMessage(data) {
     try {
-      const messageHash = ethers.utils.solidityKeccak256(
-        ["address", "uint256"],
-        [this.adminWallet.address, data]
-      );
-      const signature = await this.adminWallet.signMessage(
-        ethers.utils.arrayify(messageHash)
-      );
+      const messageHash = ethers.utils.solidityKeccak256(["address", "uint256"], [this.adminWallet.address, data]);
+      const signature = await this.adminWallet.signMessage(ethers.utils.arrayify(messageHash));
       return signature;
     } catch (error) {
       throw new Error(`Failed to sign message: ${error.message}`);
     }
   }
 
-  async liveGameFunds(userId, userAddress) {
+  async liveGameFunds(userId, userAddress, gameId) {
     try {
+      // Get the actual game to retrieve correct entry fee
+      const Game = require("../models/Game");
+      const game = await Game.findOne({ gameId });
+      if (!game) {
+        throw new Error(`Game ${gameId} not found`);
+      }
+
+      // Calculate entry fee from game's actual price
+      const entryFeeWei = ethers.utils.parseUnits(game.entryPrice.toString(), 18);
+
       const receipt = await transactionQueue.addTransaction(async (nonce) => {
         return await this.contract.liveGameFunds(userAddress, {
           gasLimit: 500000,
@@ -86,15 +75,16 @@ class BlockchainService {
         });
       }, `LiveGameFunds for user ${userAddress}`);
 
-      // Create transaction record
-      // Calculate total amount using BigNumber
-      const totalAmount = this.ENTRY_FEE.add(this.GAS_FEE);
+      // Create transaction record with actual amounts
+      // Calculate total amount using BigNumber (entry fee + gas)
+      const totalAmount = entryFeeWei.add(this.GAS_FEE);
 
       await Transaction.create({
         transactionHash: receipt.transactionHash,
         userId,
         type: "ENTRY_FEE",
         amount: totalAmount.toString(),
+        gameId: gameId,
         status: "COMPLETED",
         blockNumber: receipt.blockNumber,
         blockTimestamp: new Date(),
@@ -103,6 +93,11 @@ class BlockchainService {
         gasUsed: receipt.gasUsed.toString(),
         gasPrice: receipt.effectiveGasPrice.toString(),
         networkFee: receipt.gasUsed.mul(receipt.effectiveGasPrice).toString(),
+        metadata: {
+          entryFee: entryFeeWei.toString(),
+          gasFee: this.GAS_FEE.toString(),
+          adminFee: entryFeeWei.mul(10).div(100).toString(), // 10% admin fee
+        },
       });
 
       return receipt;
@@ -112,20 +107,10 @@ class BlockchainService {
   }
 
   // Portfolio Management
-  async createAndLockPortfolio(
-    userId,
-    userAddress,
-    symbols,
-    allocations,
-    tokenQtys,
-    gameType,
-    isApe
-  ) {
+  async createAndLockPortfolio(userId, userAddress, symbols, allocations, tokenQtys, gameType, isApe) {
     try {
       // Convert symbols to bytes32
-      const bytes32Symbols = symbols.map((symbol) =>
-        ethers.utils.formatBytes32String(symbol)
-      );
+      const bytes32Symbols = symbols.map((symbol) => ethers.utils.formatBytes32String(symbol));
 
       const receipt = await transactionQueue.addTransaction(async (nonce) => {
         // Get current owner nonce
@@ -134,20 +119,11 @@ class BlockchainService {
         // Create message hash for signing
         const messageHash = ethers.utils.solidityKeccak256(
           ["address", "bytes32[]", "uint256[]", "uint8", "bool", "uint256"],
-          [
-            userAddress,
-            bytes32Symbols,
-            tokenQtys,
-            gameType === "DEFI" ? 0 : 1,
-            isApe,
-            ownerNonce,
-          ]
+          [userAddress, bytes32Symbols, tokenQtys, gameType === "DEFI" ? 0 : 1, isApe, ownerNonce]
         );
 
         // Sign the message
-        const signature = await this.adminWallet.signMessage(
-          ethers.utils.arrayify(messageHash)
-        );
+        const signature = await this.adminWallet.signMessage(ethers.utils.arrayify(messageHash));
 
         return await this.contract.createAndLockPortfolio(
           userAddress,
@@ -163,18 +139,26 @@ class BlockchainService {
         );
       }, `CreateAndLockPortfolio for user ${userAddress}`);
 
-      // Get portfolio ID from event
-      const event = receipt.events.find((e) => e.event === "PortfolioCreated");
-      console.log("event.args -", event.args);
-      const portfolioId = event.args.portfolioId.toNumber();
+      // Get portfolio ID and entry fee from events
+      const portfolioCreatedEvent = receipt.events.find((e) => e.event === "PortfolioCreated");
+      const portfolioEntryFeePaidEvent = receipt.events.find((e) => e.event === "PortfolioEntryFeePaid");
 
-      // Create transaction record
+      console.log("event.args -", portfolioCreatedEvent.args);
+      const portfolioId = portfolioCreatedEvent.args.portfolioId.toNumber();
+      const gameId = portfolioCreatedEvent.args.gameId.toNumber();
+
+      // Get actual entry fee from blockchain event (this is the REAL amount charged)
+      const actualEntryFee = portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.entryFee.toString() : "0";
+      const actualAdminFee = portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.adminFee.toString() : "0";
+
+      // Create transaction record with ACTUAL amounts from blockchain
       await Transaction.create({
         transactionHash: receipt.transactionHash,
         userId,
         type: "CREATE_PORTFOLIO",
-        amount: isApe ? "0" : this.ENTRY_FEE.toString(),
-        gameId: event.args.gameId.toNumber(),
+        amount: isApe ? "0" : actualEntryFee,
+        adminFee: isApe ? "0" : actualAdminFee,
+        gameId: gameId,
         portfolioId,
         status: "COMPLETED",
         blockNumber: receipt.blockNumber,
@@ -217,22 +201,19 @@ class BlockchainService {
         throw new Error("Gas estimate too high, transaction likely to fail");
       }
 
-      const txResponse = await transactionQueue.addTransaction(
-        async (nonce) => {
-          return await this.contract.createGame(
-            gameId,
-            Math.floor(startTime.getTime() / 1000),
-            Math.floor(endTime.getTime() / 1000),
-            entryFeeInWei,
-            entryCap.toString(),
-            {
-              gasLimit: 600000,
-              nonce,
-            }
-          );
-        },
-        `CreateGame for gameId ${gameId}`
-      );
+      const txResponse = await transactionQueue.addTransaction(async (nonce) => {
+        return await this.contract.createGame(
+          gameId,
+          Math.floor(startTime.getTime() / 1000),
+          Math.floor(endTime.getTime() / 1000),
+          entryFeeInWei,
+          entryCap.toString(),
+          {
+            gasLimit: 600000,
+            nonce,
+          }
+        );
+      }, `CreateGame for gameId ${gameId}`);
 
       // Get game ID from event
       const event = txResponse.events.find((e) => e.event === "GameCreated");
@@ -249,14 +230,9 @@ class BlockchainService {
   // View Functions
   async getPortfolio(userAddress, portfolioId) {
     try {
-      const portfolio = await this.contract.getPortfolio(
-        userAddress,
-        portfolioId
-      );
+      const portfolio = await this.contract.getPortfolio(userAddress, portfolioId);
       return {
-        symbols: portfolio[0].map((symbol) =>
-          ethers.utils.parseBytes32String(symbol)
-        ),
+        symbols: portfolio[0].map((symbol) => ethers.utils.parseBytes32String(symbol)),
         allocations: portfolio[1].map((n) => n.toString()),
         tokenQtys: portfolio[2].map((n) => n.toString()),
         isDeFi: portfolio[3],
@@ -322,9 +298,7 @@ class BlockchainService {
     try {
       return await this.contract.isWinnersCalculationComplete(gameId);
     } catch (error) {
-      throw new Error(
-        `Failed to check winners calculation status: ${error.message}`
-      );
+      throw new Error(`Failed to check winners calculation status: ${error.message}`);
     }
   }
 
@@ -338,12 +312,8 @@ class BlockchainService {
       }, `CalculateWinners for game ${gameId}`);
 
       // Get progress from events
-      const progressEvent = receipt.events.find(
-        (e) => e.event === "WinnersCalculationProgress"
-      );
-      const completeEvent = receipt.events.find(
-        (e) => e.event === "WinnersCalculationComplete"
-      );
+      const progressEvent = receipt.events.find((e) => e.event === "WinnersCalculationProgress");
+      const completeEvent = receipt.events.find((e) => e.event === "WinnersCalculationComplete");
 
       if (completeEvent) {
         return {
@@ -422,20 +392,12 @@ class BlockchainService {
         );
 
         // Sign the message
-        const signature = await this.adminWallet.signMessage(
-          ethers.utils.arrayify(messageHash)
-        );
+        const signature = await this.adminWallet.signMessage(ethers.utils.arrayify(messageHash));
 
-        return await this.contract.updatePortfolioValue(
-          portfolioId,
-          parsedValue,
-          gameId,
-          signature,
-          {
-            gasLimit: 500000,
-            nonce,
-          }
-        );
+        return await this.contract.updatePortfolioValue(portfolioId, parsedValue, gameId, signature, {
+          gasLimit: 500000,
+          nonce,
+        });
       }, `UpdatePortfolioValue for portfolio ${portfolioId} in game ${gameId}`);
       return receipt;
     } catch (error) {
@@ -512,22 +474,13 @@ class BlockchainService {
       };
 
       // Generate signature using _signTypedData
-      const signature = await this.adminWallet._signTypedData(
-        domain,
-        types,
-        value
-      );
+      const signature = await this.adminWallet._signTypedData(domain, types, value);
 
       const receipt = await transactionQueue.addTransaction(async (nonce) => {
-        return await this.contract.batchAssignRewards(
-          portfolioIds,
-          amounts,
-          signature,
-          {
-            gasLimit: 1500000,
-            nonce,
-          }
-        );
+        return await this.contract.batchAssignRewards(portfolioIds, amounts, signature, {
+          gasLimit: 1500000,
+          nonce,
+        });
       }, `BatchAssignRewards for game ${gameId}`);
 
       return {

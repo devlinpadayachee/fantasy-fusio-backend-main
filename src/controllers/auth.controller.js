@@ -191,14 +191,21 @@ const authController = {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Fetch real-time USDC balance from blockchain
-    let currentBalance = user.currentBalance;
+    // Fetch real-time USDC balance from blockchain (in wei)
+    let currentBalanceWei = user.currentBalance || "0";
     try {
-      currentBalance = await blockchainService.getUSDCBalance(user.address);
+      currentBalanceWei = await blockchainService.getUSDCBalance(user.address);
     } catch (error) {
       console.error("Error fetching USDC balance:", error);
       // Fallback to DB balance or keep 0 if DB is 0
     }
+
+    // Helper function to convert wei to USDC dollars
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
 
     console.log("user", user);
 
@@ -212,9 +219,9 @@ const authController = {
         totalPortfoliosCreated: user.totalPortfoliosCreated,
         gamesWon: user.gamesWon,
         uniqueGamesWon: user.uniqueGamesWon,
-        totalEarnings: user.totalEarnings,
-        currentBalance: currentBalance, // Return blockchain balance
-        lockedBalance: user.lockedBalance,
+        totalEarnings: weiToUSDC(user.totalEarnings), // Convert to dollars
+        currentBalance: weiToUSDC(currentBalanceWei), // Convert to dollars
+        lockedBalance: weiToUSDC(user.lockedBalance), // Convert to dollars
       },
     });
   }),

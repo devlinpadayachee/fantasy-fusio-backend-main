@@ -56,9 +56,7 @@ exports.initializeCronJobs = () => {
               cronJob.isActive = false;
             } else if (cronJob.cronType === "RECURRING") {
               const nextExec = new Date(cronJob.nextExecution);
-              nextExec.setHours(
-                nextExec.getHours() + cronJob.recurringSchedule
-              );
+              nextExec.setHours(nextExec.getHours() + cronJob.recurringSchedule);
               cronJob.nextExecution = nextExec;
             }
 
@@ -81,7 +79,9 @@ exports.initializeCronJobs = () => {
         logCronExecution("Final Portfolio Value Update");
         const games = await Game.find({
           status: "UPDATE_VALUES",
-        }).sort({ updatedAt: 1 }).limit(5);
+        })
+          .sort({ updatedAt: 1 })
+          .limit(5);
         for (const game of games) {
           await gameService.updateLockedPortfolioValues(game);
           game.status = "CALCULATING_WINNERS";
@@ -133,10 +133,7 @@ exports.initializeCronJobs = () => {
             logCronExecution(`Processing winners for game ${game.gameId}`);
             await gameService.calculateGameWinners(game);
           } catch (error) {
-            console.error(
-              `Error calculating winners for game ${game.gameId}:`,
-              error
-            );
+            console.error(`Error calculating winners for game ${game.gameId}:`, error);
           }
         }
       } catch (error) {
@@ -159,10 +156,7 @@ exports.initializeCronJobs = () => {
             logCronExecution(`Distributing rewards for game ${game.gameId}`);
             await gameService.distributeGameRewards(game);
           } catch (error) {
-            console.error(
-              `Error distributing rewards for game ${game.gameId}:`,
-              error
-            );
+            console.error(`Error distributing rewards for game ${game.gameId}:`, error);
           }
         }
       } catch (error) {
@@ -188,27 +182,16 @@ exports.initializeCronJobs = () => {
               isApe: true,
             });
 
-            if (
-              !existingApePortfolio &&
-              game.winCondition.type === "MARLOWE_BAINES"
-            ) {
+            if (!existingApePortfolio && game.winCondition.type === "MARLOWE_BAINES") {
               console.log("Generating APE portfolio");
-              const apePortfolioId = await gameService.generateApePortfolio(
-                game.gameId,
-                game.gameType
-              );
+              const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
               game.apePortfolio = { portfolioId: apePortfolioId };
               await game.save();
             } else {
-              console.log(
-                `Ape portfolio already exists for game ${game.gameId}, skipping generation`
-              );
+              console.log(`Ape portfolio already exists for game ${game.gameId}, skipping generation`);
             }
 
-            if (
-              game.winCondition.type === "MARLOWE_BAINES" &&
-              (!game.apePortfolio || !game.apePortfolio.portfolioId)
-            ) {
+            if (game.winCondition.type === "MARLOWE_BAINES" && (!game.apePortfolio || !game.apePortfolio.portfolioId)) {
               continue;
             }
 
@@ -217,10 +200,7 @@ exports.initializeCronJobs = () => {
             await game.save();
             logCronExecution(`Updated game ${game.gameId} status to ACTIVE`);
           } catch (error) {
-            console.error(
-              `Error updating game ${game.gameId} status to ACTIVE:`,
-              error
-            );
+            console.error(`Error updating game ${game.gameId} status to ACTIVE:`, error);
           }
         }
 
@@ -254,15 +234,10 @@ exports.initializeCronJobs = () => {
 
         for (const portfolio of pendingPortfolios) {
           try {
-            const receipt =
-              await blockchainService.provider.getTransactionReceipt(
-                portfolio.transactionHash
-              );
+            const receipt = await blockchainService.provider.getTransactionReceipt(portfolio.transactionHash);
 
             if (!receipt || !receipt.logs) {
-              console.error(
-                `No receipt or logs found for transaction ${portfolio.transactionHash}`
-              );
+              console.error(`No receipt or logs found for transaction ${portfolio.transactionHash}`);
               continue;
             }
 
@@ -277,20 +252,13 @@ exports.initializeCronJobs = () => {
               })
               .filter((event) => event !== null);
 
-            const portfolioCreatedEvent = decodedEvents.find(
-              (e) => e.name === "PortfolioCreated"
-            );
-            const portfolioEntryFeePaidEvent = decodedEvents.find(
-              (e) => e.name === "PortfolioEntryFeePaid"
-            );
+            const portfolioCreatedEvent = decodedEvents.find((e) => e.name === "PortfolioCreated");
+            const portfolioEntryFeePaidEvent = decodedEvents.find((e) => e.name === "PortfolioEntryFeePaid");
 
             if (!portfolioCreatedEvent) {
-              console.error(
-                `PortfolioCreated event not found in transaction ${portfolio.transactionHash}`
-              );
+              console.error(`PortfolioCreated event not found in transaction ${portfolio.transactionHash}`);
               portfolio.status = "FAILED";
-              portfolio.error =
-                "PortfolioCreated event not found in transaction";
+              portfolio.error = "PortfolioCreated event not found in transaction";
               await portfolio.save();
               continue;
             }
@@ -298,19 +266,13 @@ exports.initializeCronJobs = () => {
             if (receipt.status) {
               // Validate event data matches portfolio data
               if (
-                portfolioCreatedEvent.args.portfolioId.toNumber() !==
-                  portfolio.portfolioId ||
-                portfolioCreatedEvent.args.gameId.toNumber() !==
-                  portfolio.gameId ||
-                portfolio.userId.address.toLowerCase() !==
-                  portfolioCreatedEvent.args.owner.toLowerCase()
+                portfolioCreatedEvent.args.portfolioId.toNumber() !== portfolio.portfolioId ||
+                portfolioCreatedEvent.args.gameId.toNumber() !== portfolio.gameId ||
+                portfolio.userId.address.toLowerCase() !== portfolioCreatedEvent.args.owner.toLowerCase()
               ) {
-                console.error(
-                  `PortfolioCreated event data does not match portfolio ${portfolio._id}`
-                );
+                console.error(`PortfolioCreated event data does not match portfolio ${portfolio._id}`);
                 portfolio.status = "FAILED";
-                portfolio.error =
-                  "PortfolioCreated event data does not match portfolio";
+                portfolio.error = "PortfolioCreated event data does not match portfolio";
                 await portfolio.save();
                 continue;
               }
@@ -319,12 +281,8 @@ exports.initializeCronJobs = () => {
                 transactionHash: portfolio.transactionHash,
                 userId: portfolio.userId,
                 type: "ENTRY_FEE",
-                amount: portfolioEntryFeePaidEvent
-                  ? portfolioEntryFeePaidEvent.args.entryFee.toString()
-                  : "0",
-                adminFee: portfolioEntryFeePaidEvent
-                  ? portfolioEntryFeePaidEvent.args.adminFee.toString()
-                  : "0",
+                amount: portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.entryFee.toString() : "0",
+                adminFee: portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.adminFee.toString() : "0",
                 gameId: portfolioCreatedEvent.args.gameId.toNumber(),
                 portfolioId: portfolioEntryFeePaidEvent
                   ? portfolioEntryFeePaidEvent.args.portfolioId.toNumber()
@@ -332,15 +290,11 @@ exports.initializeCronJobs = () => {
                 status: "COMPLETED",
                 blockNumber: receipt.blockNumber,
                 blockTimestamp: new Date(),
-                fromAddress: portfolioEntryFeePaidEvent
-                  ? portfolioEntryFeePaidEvent.args.payer
-                  : null,
+                fromAddress: portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.payer : null,
                 toAddress: config.blockchain.contractAddress,
                 gasUsed: receipt.gasUsed.toString(),
                 gasPrice: receipt.effectiveGasPrice.toString(),
-                networkFee: receipt.gasUsed
-                  .mul(receipt.effectiveGasPrice)
-                  .toString(),
+                networkFee: receipt.gasUsed.mul(receipt.effectiveGasPrice).toString(),
               });
 
               const gameId = portfolioCreatedEvent.args.gameId.toNumber();
@@ -354,14 +308,8 @@ exports.initializeCronJobs = () => {
 
               const game = await Game.findOne({ gameId: gameId });
               if (game) {
-                game.participantCount = Math.max(
-                  game.participantCount || 0,
-                  gameEntryCount
-                );
-                game.totalPrizePool = Math.max(
-                  game.totalPrizePool || 0,
-                  prizePool
-                );
+                game.participantCount = Math.max(game.participantCount || 0, gameEntryCount);
+                game.totalPrizePool = Math.max(game.totalPrizePool || 0, prizePool);
                 await game.save();
               }
               portfolio.status = "PENDING";
@@ -401,44 +349,29 @@ exports.initializeCronJobs = () => {
         const pendingPortfolios = await Portfolio.find({
           status: "PENDING_LOCK_BALANCE",
           transactionHash: { $exists: false },
-          $or: [
-            { retryCount: 0 },
-            { retryCount: { $lt: 5 }, lastRetryAt: { $lt: twoMinutesAgo } },
-          ],
+          $or: [{ retryCount: 0 }, { retryCount: { $lt: 5 }, lastRetryAt: { $lt: twoMinutesAgo } }],
         }).populate("userId");
 
         for (const portfolio of pendingPortfolios) {
           try {
             // Call getPortfolioOwner from smart contract
-            const portfolioOwner = await blockchainService.getPortfolioOwner(
-              portfolio.portfolioId
-            );
+            const portfolioOwner = await blockchainService.getPortfolioOwner(portfolio.portfolioId);
 
             const zeroAddress = "0x0000000000000000000000000000000000000000";
             const userAddress = portfolio.userId.address.toLowerCase();
 
             if (portfolioOwner.toLowerCase() === userAddress) {
               // Portfolio owner matches user address - mark as successful
-              console.log(
-                `Portfolio ${portfolio.portfolioId} owner matches user ${portfolio.userId.address}`
-              );
+              console.log(`Portfolio ${portfolio.portfolioId} owner matches user ${portfolio.userId.address}`);
 
               // Get game details
-              const gameDetails = await blockchainService.getGameDetails(
-                portfolio.gameId
-              );
+              const gameDetails = await blockchainService.getGameDetails(portfolio.gameId);
 
               // Update game with participant count and prize pool
               const game = await Game.findOne({ gameId: portfolio.gameId });
               if (game) {
-                game.participantCount = Math.max(
-                  game.participantCount || 0,
-                  gameDetails.entryCount
-                );
-                game.totalPrizePool = Math.max(
-                  game.totalPrizePool || 0,
-                  parseInt(gameDetails.totalPrizePool)
-                );
+                game.participantCount = Math.max(game.participantCount || 0, gameDetails.entryCount);
+                game.totalPrizePool = Math.max(game.totalPrizePool || 0, parseInt(gameDetails.totalPrizePool));
                 await game.save();
               }
 
@@ -448,12 +381,17 @@ exports.initializeCronJobs = () => {
               portfolio.retryError = null;
               await portfolio.save();
 
+              // Calculate entry fee and admin fee properly in wei
+              const { ethers } = require("ethers");
+              const entryFeeWei = ethers.utils.parseUnits(game.entryPrice.toString(), 18);
+              const adminFeeWei = entryFeeWei.mul(10).div(100); // 10% admin fee
+
               await Transaction.create({
                 transactionHash: "MANUAL_ENTRY_NO_TX_HASH",
                 userId: portfolio.userId,
                 type: "ENTRY_FEE",
-                amount: game.entryPrice * 10 ** 18,
-                adminFee: game.entryPrice * 10 ** 17,
+                amount: entryFeeWei.toString(),
+                adminFee: adminFeeWei.toString(),
                 gameId: portfolio.gameId,
                 portfolioId: portfolio.portfolioId,
                 status: "COMPLETED",
@@ -461,9 +399,9 @@ exports.initializeCronJobs = () => {
                 blockTimestamp: new Date(),
                 fromAddress: userAddress,
                 toAddress: config.blockchain.contractAddress,
-                gasUsed: 0,
-                gasPrice: 0,
-                networkFee: 0,
+                gasUsed: "0",
+                gasPrice: "0",
+                networkFee: "0",
               });
 
               await new Notification({
@@ -473,9 +411,7 @@ exports.initializeCronJobs = () => {
               }).save();
             } else if (portfolioOwner.toLowerCase() === zeroAddress) {
               // Portfolio owner is zero address - mark as failed
-              console.log(
-                `Portfolio ${portfolio.portfolioId} owner is zero address - marking as failed`
-              );
+              console.log(`Portfolio ${portfolio.portfolioId} owner is zero address - marking as failed`);
 
               if (portfolio.retryCount < 5) {
                 portfolio.retryCount += 1;
@@ -495,10 +431,7 @@ exports.initializeCronJobs = () => {
               }
             }
           } catch (error) {
-            console.error(
-              `Error processing portfolio ${portfolio.portfolioId}:`,
-              error
-            );
+            console.error(`Error processing portfolio ${portfolio.portfolioId}:`, error);
             if (portfolio.retryCount < 5) {
               portfolio.retryCount += 1;
               portfolio.lastRetryAt = new Date();

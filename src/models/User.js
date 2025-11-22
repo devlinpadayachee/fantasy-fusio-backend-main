@@ -41,16 +41,16 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
     totalEarnings: {
-      type: Number,
-      default: 0,
+      type: String,
+      default: "0",
     },
     currentBalance: {
-      type: Number,
-      default: 0,
+      type: String,
+      default: "0",
     },
     lockedBalance: {
-      type: Number,
-      default: 0,
+      type: String,
+      default: "0",
     },
     isActive: {
       type: Boolean,
@@ -144,7 +144,10 @@ userSchema.methods.updateGameStats = async function (gameId, portfolioId, perfor
 
     if (parsedEarnings > 0) {
       this.gamesWon += 1;
-      this.totalEarnings = (this.totalEarnings || 0) + parsedEarnings;
+      const totalEarnings = BigInt(this.totalEarnings || "0");
+      // parsedEarnings is already in wei (string), not dollars
+      const earningsToAdd = BigInt(parsedEarnings);
+      this.totalEarnings = (totalEarnings + earningsToAdd).toString();
 
       // Check if this is a new unique game win
       // Look for other winning entries for this same gameId
@@ -165,11 +168,9 @@ userSchema.methods.updateGameStats = async function (gameId, portfolioId, perfor
 
 userSchema.methods.updateBalance = function (amount) {
   try {
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount)) {
-      throw new Error("Invalid amount value");
-    }
-    this.currentBalance = (this.currentBalance || 0) + parsedAmount;
+    const currentBalance = BigInt(this.currentBalance || "0");
+    const addAmount = BigInt(amount);
+    this.currentBalance = (currentBalance + addAmount).toString();
     return this.save();
   } catch (error) {
     console.error("Error updating balance:", error);
@@ -179,13 +180,13 @@ userSchema.methods.updateBalance = function (amount) {
 
 userSchema.methods.lockBalance = function (amount) {
   try {
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount)) {
-      throw new Error("Invalid amount value");
-    }
-    if (this.currentBalance >= parsedAmount) {
-      this.currentBalance = (this.currentBalance || 0) - parsedAmount;
-      this.lockedBalance = (this.lockedBalance || 0) + parsedAmount;
+    const currentBalance = BigInt(this.currentBalance || "0");
+    const lockAmount = BigInt(amount);
+    const lockedBalance = BigInt(this.lockedBalance || "0");
+
+    if (currentBalance >= lockAmount) {
+      this.currentBalance = (currentBalance - lockAmount).toString();
+      this.lockedBalance = (lockedBalance + lockAmount).toString();
       return this.save();
     }
     throw new Error("Insufficient balance");
@@ -197,13 +198,13 @@ userSchema.methods.lockBalance = function (amount) {
 
 userSchema.methods.unlockBalance = function (amount) {
   try {
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount)) {
-      throw new Error("Invalid amount value");
-    }
-    if (this.lockedBalance >= parsedAmount) {
-      this.lockedBalance = (this.lockedBalance || 0) - parsedAmount;
-      this.currentBalance = (this.currentBalance || 0) + parsedAmount;
+    const lockedBalance = BigInt(this.lockedBalance || "0");
+    const unlockAmount = BigInt(amount);
+    const currentBalance = BigInt(this.currentBalance || "0");
+
+    if (lockedBalance >= unlockAmount) {
+      this.lockedBalance = (lockedBalance - unlockAmount).toString();
+      this.currentBalance = (currentBalance + unlockAmount).toString();
       return this.save();
     }
     throw new Error("Insufficient locked balance");

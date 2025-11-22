@@ -72,6 +72,15 @@ const gameController = {
 
   // Get global leaderboard with all-time stats and last game winners
   getGlobalLeaderboard: asyncHandler(async (req, res) => {
+    const ethers = require('ethers');
+
+    // Helper function to convert wei to USDC dollars
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
     try {
       // Get last completed games for both DEFI and TRADFI
       const lastGames = await Game.find({
@@ -124,16 +133,17 @@ const gameController = {
                     "username address profileImage"
                   );
 
+                  const rewardWei = portfolio?.gameOutcome?.reward || 0;
+                  const rewardUSDC = weiToUSDC(rewardWei);
+
                   return {
                     username: user.username || user.address.slice(0, 8) + "...",
                     profileImage: user.profileImage,
                     portfolioId: portfolio?.portfolioId,
                     portfolioName: portfolio?.portfolioName,
                     gameType: winner.gameType,
-                    reward: portfolio?.gameOutcome?.reward || 0,
-                    rewardFormatted: `${
-                      portfolio?.gameOutcome?.reward || 0
-                    } USDC`,
+                    reward: rewardUSDC, // Convert to USDC
+                    rewardFormatted: `${rewardUSDC.toFixed(2)} USDC`,
                     performance: winner.performancePercentage.toFixed(2) + "%",
                     position: ["1st", "2nd", "3rd"][index],
                   };
@@ -207,9 +217,10 @@ const gameController = {
         { $limit: 100 },
       ]);
 
-      // Add position (1st, 2nd, 3rd, etc.) to each user
+      // Add position (1st, 2nd, 3rd, etc.) to each user and convert totalEarnings
       const leaderboard = topUsers.map((user, index) => ({
         ...user,
+        totalEarnings: weiToUSDC(user.totalEarnings), // Convert to USDC
         position: `${index + 1}${
           index + 1 === 1
             ? "st"
@@ -378,11 +389,12 @@ const gameController = {
 
   // Get game history with filters
   getGameHistory: asyncHandler(async (req, res) => {
+    const ethers = require('ethers');
     const { type, limit = 10, page = 1 } = req.query;
     const userId = req.user._id;
 
     // Find portfolios created by the user
-    const userPortfolios = await Portfolio.find({ userId }).select("gameId");
+    const userPortfolios = await Portfolio.find({ userId }).select("gameId gameOutcome");
     const gameIds = Array.from(new Set(userPortfolios.map((p) => p.gameId)));
 
     const query = {
@@ -401,10 +413,31 @@ const gameController = {
 
     const total = await Game.countDocuments(query);
 
+    // Helper function to convert wei to USDC dollars
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
     res.json({
-      games: games.map((game) => ({
-        ...game.toObject(),
-      })),
+      games: games.map((game) => {
+        const gameObj = game.toObject();
+        return {
+          ...gameObj,
+          totalPrizePool: weiToUSDC(gameObj.totalPrizePool),
+        };
+      }),
+      userPortfolios: userPortfolios.map((p) => {
+        const portfolioObj = p.toObject ? p.toObject() : p;
+        return {
+          ...portfolioObj,
+          gameOutcome: portfolioObj.gameOutcome ? {
+            ...portfolioObj.gameOutcome,
+            reward: weiToUSDC(portfolioObj.gameOutcome.reward),
+          } : null,
+        };
+      }),
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),

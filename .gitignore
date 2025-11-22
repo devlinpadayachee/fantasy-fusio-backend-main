@@ -128,6 +128,8 @@ dump.rdb
 *.bak
 *.backup
 *~
+backups/
+manual-backup-*/
 
 # Test coverage
 coverage/
