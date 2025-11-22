@@ -59,19 +59,6 @@ const userSchema = new mongoose.Schema(
     lastLogin: {
       type: Date,
     },
-    gameHistory: [
-      {
-        gameId: Number,
-        portfolioId: Number,
-        performance: Number,
-        earnings: Number,
-        rank: Number,
-        timestamp: {
-          type: Date,
-          default: Date.now,
-        },
-      },
-    ],
   },
   {
     timestamps: true,
@@ -91,74 +78,47 @@ userSchema.methods.generateNonce = function () {
 
 userSchema.methods.updateGameStats = async function (gameId, portfolioId, performance, earnings, rank) {
   try {
-    // Ensure earnings is a valid number
-    const parsedEarnings = parseFloat(earnings);
-    if (isNaN(parsedEarnings)) {
-      console.error("Invalid earnings value:", earnings);
-      throw new Error("Invalid earnings value");
-    }
+    const Portfolio = require("./Portfolio");
 
-    // Update game history
-    this.gameHistory.push({
-      gameId: Number(gameId),
-      portfolioId: Number(portfolioId),
-      performance: parseFloat(performance),
-      earnings: parsedEarnings,
-      rank: Number(rank),
-      timestamp: new Date(),
-    });
+    // Ensure earnings is valid (should be wei string)
+    const parsedEarnings = BigInt(earnings || "0");
 
     // Update statistics
-    // Note: totalGamesPlayed in legacy was used as "portfolios played", but user requested tracking games vs portfolios separately.
-    // To maintain backward compatibility but support new stats:
-    // We will track unique games played separately if needed, but for now let's ensure we have totalPortfoliosCreated
-
     this.totalPortfoliosCreated = (this.totalPortfoliosCreated || 0) + 1;
 
-    // If this is the first portfolio for this gameId, increment totalGamesPlayed
-    // Check if user already has an entry for this gameId in gameHistory (excluding the one we just added)
-    const existingEntry = this.gameHistory.find(
-      (entry) => entry.gameId === Number(gameId) && entry.portfolioId !== Number(portfolioId)
-    );
+    // Check if user already has a portfolio for this gameId (excluding current one)
+    // This tells us if it's a new unique game for this user
+    const existingPortfolio = await Portfolio.exists({
+      userId: this._id,
+      gameId: Number(gameId),
+      portfolioId: { $ne: Number(portfolioId) },
+    });
 
-    // Only increment totalGamesPlayed if it's a new game for this user
-    if (!existingEntry) {
-      // We need to be careful here. Previous logic (fixUserStats) calculated totalGamesPlayed as total entries.
-      // If we change the definition now, existing data will be mixed.
-      // The user said: "This si not the gamess participated in as we already know that its their total games but we want to see that if they create 1000 portoflios and the never win then they suck"
-      // So "Total Games Played" should likely remain "Unique Games Participated In".
-      // And "Total Portfolios Created" is the new metric.
-
-      // My previous fixUserStats script calculated totalGamesPlayed as unique games? No, I changed it to count every portfolio as a "game played" in the last step of previous turn.
-      // "totalGamesPlayed++;" inside the portfolio loop.
-
-      // So currently in DB, totalGamesPlayed = totalPortfoliosCreated.
-
-      // To fix this, I should:
-      // 1. Introduce `totalPortfoliosCreated` (done)
-      // 2. Update `totalGamesPlayed` to mean UNIQUE games played.
-      // 3. Backfill both correctly.
-
+    // Only increment totalGamesPlayed if it's a new unique game for this user
+    if (!existingPortfolio) {
       this.totalGamesPlayed = (this.totalGamesPlayed || 0) + 1;
     }
 
-    if (parsedEarnings > 0) {
+    // Handle winning portfolios
+    if (parsedEarnings > 0n) {
       this.gamesWon += 1;
       const totalEarnings = BigInt(this.totalEarnings || "0");
-      // parsedEarnings is already in wei (string), not dollars
-      const earningsToAdd = BigInt(parsedEarnings);
-      this.totalEarnings = (totalEarnings + earningsToAdd).toString();
+      this.totalEarnings = (totalEarnings + parsedEarnings).toString();
 
-      // Check if this is a new unique game win
-      // Look for other winning entries for this same gameId
-      const alreadyWonGame = this.gameHistory.some(
-        (entry) => entry.gameId === Number(gameId) && entry.portfolioId !== Number(portfolioId) && entry.earnings > 0
-      );
+      // Check if user already won this game before (different portfolio)
+      const alreadyWonGame = await Portfolio.exists({
+        userId: this._id,
+        gameId: Number(gameId),
+        portfolioId: { $ne: Number(portfolioId) },
+        status: "WON",
+      });
 
+      // If this is the first win for this game, increment unique games won
       if (!alreadyWonGame) {
         this.uniqueGamesWon = (this.uniqueGamesWon || 0) + 1;
       }
     }
+
     return this.save();
   } catch (error) {
     console.error("Error updating game stats:", error);
@@ -212,6 +172,87 @@ userSchema.methods.unlockBalance = function (amount) {
     console.error("Error unlocking balance:", error);
     throw error;
   }
+};
+
+userSchema.methods.getGameHistory = async function (options = {}) {
+  const Portfolio = require("./Portfolio");
+  const { limit = 50, page = 1, gameType, status } = options;
+
+  const query = { userId: this._id };
+  if (gameType) {
+    query.gameType = gameType.toUpperCase();
+  }
+  if (status) {
+    query.status = status;
+  }
+
+  const portfolios = await Portfolio.find(query)
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  const total = await Portfolio.countDocuments(query);
+
+  return {
+    history: portfolios.map((p) => ({
+      gameId: p.gameId,
+      portfolioId: p.portfolioId,
+      portfolioName: p.portfolioName,
+      gameType: p.gameType,
+      performance: p.performancePercentage,
+      earnings: p.gameOutcome?.reward || "0",
+      rank: p.gameOutcome?.rank,
+      status: p.status,
+      timestamp: p.createdAt,
+    })),
+    pagination: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      pages: Math.ceil(total / limit),
+    },
+  };
+};
+
+userSchema.methods.getGameHistory = async function (options = {}) {
+  const Portfolio = require("./Portfolio");
+  const { limit = 50, page = 1, gameType, status } = options;
+
+  const query = { userId: this._id };
+  if (gameType) {
+    query.gameType = gameType.toUpperCase();
+  }
+  if (status) {
+    query.status = status;
+  }
+
+  const portfolios = await Portfolio.find(query)
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  const total = await Portfolio.countDocuments(query);
+
+  return {
+    history: portfolios.map((p) => ({
+      gameId: p.gameId,
+      portfolioId: p.portfolioId,
+      portfolioName: p.portfolioName,
+      performance: p.performancePercentage,
+      earnings: p.gameOutcome?.reward || "0",
+      rank: p.gameOutcome?.rank,
+      status: p.status,
+      timestamp: p.createdAt,
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    },
+  };
 };
 
 // Statics

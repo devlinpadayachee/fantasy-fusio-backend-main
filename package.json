@@ -11,10 +11,17 @@
     "format": "prettier --write 'src/**/*.js'",
     "seed:assets": "node src/scripts/initializeAssets.js",
     "db:backup": "node scripts/backup-database.js",
+    "db:backup:json": "node scripts/backup-database-json.js",
     "db:restore": "node scripts/restore-database.js",
+    "db:restore:json": "node scripts/restore-database-json.js",
     "test:conversions": "node scripts/test-string-conversions.js",
     "migrate:check": "node scripts/check-migration-status.js",
-    "migrate:run": "node scripts/migrate-wei-to-string.js",
+    "migrate:run": "node scripts/migrate-complete.js",
+    "migrate:verify": "node scripts/verify-migration-complete.js",
+    "migrate:remove-gamehistory": "node scripts/migrate-remove-gamehistory.js",
+    "analyze:relationships": "node scripts/analyze-user-game-relationships.js",
+    "verify:gamehistory": "node scripts/verify-gamehistory-removal.js",
+    "migrate:run": "node scripts/migrate-complete.js",
     "migrate:rollback": "node scripts/rollback-wei-migration.js"
   },
   "dependencies": {
