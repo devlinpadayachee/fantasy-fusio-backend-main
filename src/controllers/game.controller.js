@@ -82,13 +82,12 @@ const gameController = {
     };
 
     try {
-      // Get last completed games for both DEFI and TRADFI
-      const lastGames = await Game.find({
+      // Get the single most recent completed game
+      const lastGame = await Game.findOne({
         status: "COMPLETED",
         gameType: { $in: ["DEFI", "TRADFI"] },
       })
         .sort({ endTime: -1 })
-        .limit(1) // Get latest game of each type
         .populate({
           path: "winners",
           populate: {
@@ -180,23 +179,13 @@ const gameController = {
       const communityAvgEarnings = communityStats.avgEarnings;
       const totalUsers = communityStats.totalUsers;
 
-      // Combine and sort all winners from both games
-      const allWinners = lastGames.reduce((acc, game) => {
-        return acc.concat(
-          game.winners.map((w) => ({
-            ...w.toObject(),
-            gameType: game.gameType,
-          }))
-        );
-      }, []);
-
-      // Get top 3 winners overall
+      // Get top 3 winners from the most recent completed game
+      // Winners are already sorted by performance in the game model
       const lastGameWinners =
-        allWinners.length > 0
+        lastGame && lastGame.winners && lastGame.winners.length > 0
           ? await Promise.all(
-              allWinners
-                .sort((a, b) => b.performancePercentage - a.performancePercentage)
-                .slice(0, 3)
+              lastGame.winners
+                .slice(0, 3) // Take top 3 winners
                 .map(async (winner, index) => {
                   // Get portfolio details for reward
                   const portfolio = await Portfolio.findOne({
@@ -214,7 +203,10 @@ const gameController = {
                     profileImage: user.profileImage,
                     portfolioId: portfolio?.portfolioId,
                     portfolioName: portfolio?.portfolioName,
-                    gameType: winner.gameType,
+                    gameType: lastGame.gameType,
+                    gameId: lastGame.gameId,
+                    gameName: lastGame.name,
+                    endTime: lastGame.endTime,
                     reward: rewardUSDC, // Convert to USDC
                     rewardFormatted: `${rewardUSDC.toFixed(2)} USDC`,
                     performance: winner.performancePercentage.toFixed(2) + "%",
@@ -290,11 +282,11 @@ const gameController = {
         position: `${index + 1}${index + 1 === 1 ? "st" : index + 1 === 2 ? "nd" : index + 1 === 3 ? "rd" : "th"}`,
       }));
 
-      // Get Ape's portfolio stats
+      // Get Ape's portfolio stats (using isApe flag instead of portfolioName for reliability)
       const apeStats = await Portfolio.aggregate([
         {
           $match: {
-            portfolioName: "MARLOW BANES",
+            isApe: true,
             status: { $ne: "PENDING" },
           },
         },
@@ -355,11 +347,6 @@ const gameController = {
         lastGameWinners,
         leaderboard,
         apeStats: apePortfolioStats,
-        lastGameIds: lastGames.map((game) => game.gameId),
-        lastGameEndTimes: lastGames.map((game) => ({
-          gameType: game.gameType,
-          endTime: game.endTime,
-        })),
         totalCompletedGamesCount,
         upcomingGames,
         communityStats: {
