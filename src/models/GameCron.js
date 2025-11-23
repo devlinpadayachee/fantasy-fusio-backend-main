@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 const cron = require('node-cron');
 
 // Win condition schemas
-const marloweWinConditionSchema = new mongoose.Schema({
-    // No additional config needed for Marlowe Baines
+const marlowWinConditionSchema = new mongoose.Schema({
+    // No additional config needed for Marlow Banes
 }, { _id: false });
 
 const equalDistributeWinConditionSchema = new mongoose.Schema({
@@ -129,18 +129,18 @@ const gameCronSchema = new mongoose.Schema(
     winCondition: {
       type: {
         type: String,
-        enum: ["MARLOWE_BAINES", "EQUAL_DISTRIBUTE", "TIERED"],
+        enum: ["MARLOW_BANES", "EQUAL_DISTRIBUTE", "TIERED"],
         required: true,
       },
       config: {
         type: mongoose.Schema.Types.Mixed,
         required: function () {
-          return this.winCondition.type !== "MARLOWE_BAINES";
+          return this.winCondition.type !== "MARLOW_BANES";
         },
         validate: {
           validator: function (config) {
             switch (this.winCondition.type) {
-              case "MARLOWE_BAINES":
+              case "MARLOW_BANES":
                 return Object.keys(config).length === 0;
               case "EQUAL_DISTRIBUTE":
                 return (

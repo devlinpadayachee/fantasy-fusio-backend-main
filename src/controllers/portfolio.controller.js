@@ -496,7 +496,7 @@ const portfolioController = {
       return res.status(404).json({ error: "Game not found" });
     }
 
-    if (game.winCondition.type !== "MARLOWE_BAINES") {
+    if (game.winCondition.type !== "MARLOW_BANES") {
       const user = await User.findById(
         userPortfolio.userId,
         "username profileImage"

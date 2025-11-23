@@ -104,11 +104,8 @@ class GameService {
   // Create a game from a GameCron object
   async createGameFromCron(gameCron) {
     try {
-      // Defensive validation for winCondition.config presence except for MARLOWE_BAINES type
-      if (
-        !gameCron.winCondition ||
-        (gameCron.winCondition.type !== "MARLOWE_BAINES" && !gameCron.winCondition.config)
-      ) {
+      // Defensive validation for winCondition.config presence except for MARLOW_BANES type
+      if (!gameCron.winCondition || (gameCron.winCondition.type !== "MARLOW_BANES" && !gameCron.winCondition.config)) {
         throw new Error("Invalid gameCron: winCondition.config is required");
       }
 
@@ -343,13 +340,11 @@ class GameService {
       // 1. Validate all portfolios have valid values
       const allPortfolios = await Portfolio.find({
         gameId: game.gameId,
-        status: "LOCKED"
+        status: "LOCKED",
       });
 
-      const invalidPortfolios = allPortfolios.filter(p =>
-        !p.currentValue ||
-        p.currentValue === 0 ||
-        !isFinite(p.performancePercentage)
+      const invalidPortfolios = allPortfolios.filter(
+        (p) => !p.currentValue || p.currentValue === 0 || !isFinite(p.performancePercentage)
       );
 
       if (invalidPortfolios.length > 0) {
@@ -357,30 +352,34 @@ class GameService {
         game.error = `Cannot calculate winners: ${invalidPortfolios.length} portfolios have invalid values`;
         await game.save();
         console.error(`❌ Game ${game.gameId} FAILED: ${invalidPortfolios.length} portfolios with invalid values`);
-        console.error('Invalid portfolio IDs:', invalidPortfolios.map(p => p.portfolioId));
+        console.error(
+          "Invalid portfolio IDs:",
+          invalidPortfolios.map((p) => p.portfolioId)
+        );
         return;
       }
 
       // 2. Check asset prices are recent (< 15 minutes old)
       const Asset = require("../models/Asset");
       const assets = await Asset.find({ type: game.gameType });
-      const staleAssets = assets.filter(a =>
-        Date.now() - new Date(a.lastUpdated).getTime() > 15 * 60 * 1000
-      );
+      const staleAssets = assets.filter((a) => Date.now() - new Date(a.lastUpdated).getTime() > 15 * 60 * 1000);
 
       if (staleAssets.length > 0) {
         console.warn(`⚠️  Warning: ${staleAssets.length} assets have stale prices (>15 min old)`);
-        console.warn('Stale assets:', staleAssets.map(a => `${a.symbol} (${a.lastUpdated})`));
+        console.warn(
+          "Stale assets:",
+          staleAssets.map((a) => `${a.symbol} (${a.lastUpdated})`)
+        );
       }
 
       console.log(`✅ Validation passed: ${allPortfolios.length} portfolios, ${assets.length} assets`);
       console.log(`Win Condition: ${game.winCondition.type}`);
 
       // ========================================
-      // MARLOWE_BAINES LOGIC
+      // MARLOW_BANES LOGIC
       // ========================================
-      if (game.winCondition.type === "MARLOWE_BAINES") {
-        console.log(`\n--- MARLOWE_BAINES: Beat the Ape ---`);
+      if (game.winCondition.type === "MARLOW_BANES") {
+        console.log(`\n--- MARLOW_BANES: Beat the Ape ---`);
 
         // Get totalPrizePool from blockchain
         const gameDetails = await blockchainService.getGameDetails(game.gameId);
@@ -401,7 +400,9 @@ class GameService {
         }
 
         const apeCurrentValue = apePortfolio.currentValue;
-        console.log(`Ape Portfolio: $${apeCurrentValue.toLocaleString()} (${apePortfolio.performancePercentage.toFixed(2)}%)`);
+        console.log(
+          `Ape Portfolio: $${apeCurrentValue.toLocaleString()} (${apePortfolio.performancePercentage.toFixed(2)}%)`
+        );
 
         const lockedPortfolios = await Portfolio.find({
           gameId: game.gameId,
@@ -414,10 +415,14 @@ class GameService {
         let winningPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue > apeCurrentValue);
 
         // Log top 10 standings
-        console.log('\n📊 Top 10 Standings:');
+        console.log("\n📊 Top 10 Standings:");
         lockedPortfolios.slice(0, 10).forEach((p, i) => {
-          const isWinner = p.currentValue > apeCurrentValue ? '✅' : '❌';
-          console.log(`${i + 1}. ${isWinner} Portfolio ${p.portfolioId}: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`);
+          const isWinner = p.currentValue > apeCurrentValue ? "✅" : "❌";
+          console.log(
+            `${i + 1}. ${isWinner} Portfolio ${
+              p.portfolioId
+            }: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`
+          );
         });
 
         if (winningPortfolios.length === 0) {
@@ -526,7 +531,7 @@ class GameService {
           }).save();
         }
 
-        console.log(`\n✅ MARLOWE_BAINES Complete:`);
+        console.log(`\n✅ MARLOW_BANES Complete:`);
         console.log(`   Winners: ${winningPortfolios.length}`);
         console.log(`   Losers: ${losingPortfolios.length}`);
         console.log(`========== WINNER CALCULATION END: Game ${game.gameId} ==========\n`);
@@ -565,7 +570,13 @@ class GameService {
 
         console.log(`Total Portfolios: ${lockedPortfolios.length}`);
         console.log(`Top ${topWinnersPercentage}% = ${topWinnersCount} winners`);
-        console.log(`Reward Pool: ${rewardPercentage}% of prize = $${(Number(totalPrizePool) * rewardPercentage / 100 / 1e18).toFixed(2)}`);
+        console.log(
+          `Reward Pool: ${rewardPercentage}% of prize = $${(
+            (Number(totalPrizePool) * rewardPercentage) /
+            100 /
+            1e18
+          ).toFixed(2)}`
+        );
 
         const winners = lockedPortfolios.slice(0, topWinnersCount);
 
@@ -580,10 +591,14 @@ class GameService {
         console.log(`Reward per winner: $${(Number(rewardPerWinner) / 1e18).toFixed(2)}`);
 
         // Log top 10 standings
-        console.log('\n📊 Top 10 Standings:');
+        console.log("\n📊 Top 10 Standings:");
         lockedPortfolios.slice(0, 10).forEach((p, i) => {
-          const isWinner = i < topWinnersCount ? '✅' : '❌';
-          console.log(`${i + 1}. ${isWinner} Portfolio ${p.portfolioId}: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`);
+          const isWinner = i < topWinnersCount ? "✅" : "❌";
+          console.log(
+            `${i + 1}. ${isWinner} Portfolio ${
+              p.portfolioId
+            }: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`
+          );
         });
 
         for (let i = 0; i < winners.length; i++) {
@@ -703,10 +718,10 @@ class GameService {
         console.log(`Prize Pool: $${(Number(totalPrizePool) / 1e18).toFixed(2)}`);
 
         const tiers = game.winCondition.config.tiers;
-        console.log(`Tiers: ${tiers.map(t => `#${t.position}=${t.rewardPercentage}%`).join(', ')}`);
+        console.log(`Tiers: ${tiers.map((t) => `#${t.position}=${t.rewardPercentage}%`).join(", ")}`);
 
         // Optimization: Only fetch what we need for TIERED
-        const maxPosition = Math.max(...tiers.map(t => t.position));
+        const maxPosition = Math.max(...tiers.map((t) => t.position));
         const lockedPortfolios = await Portfolio.find({
           gameId: game.gameId,
           status: "LOCKED",
@@ -725,20 +740,26 @@ class GameService {
           game.status = "FAILED";
           game.error = `Total rewardPercentage of tiers must be ≤100, got ${totalRewardPercentage}%`;
           await game.save();
-          console.error(`❌ Game ${game.gameId} FAILED: Total reward percentage ${totalRewardPercentage}% exceeds 100%`);
+          console.error(
+            `❌ Game ${game.gameId} FAILED: Total reward percentage ${totalRewardPercentage}% exceeds 100%`
+          );
           throw new Error(`Total rewardPercentage of tiers must be ≤100, got ${totalRewardPercentage}%`);
         }
 
         console.log(`Total Reward Allocation: ${totalRewardPercentage}% (${100 - totalRewardPercentage}% to platform)`);
 
         // Log top standings (up to max position + 10)
-        console.log('\n📊 Top Standings:');
-        const displayCount = Math.min(lockedPortfolios.length, Math.max(...tiers.map(t => t.position)) + 10);
+        console.log("\n📊 Top Standings:");
+        const displayCount = Math.min(lockedPortfolios.length, Math.max(...tiers.map((t) => t.position)) + 10);
         for (let i = 0; i < displayCount; i++) {
           const p = lockedPortfolios[i];
-          const tier = tiers.find(t => t.position === i + 1);
-          const status = tier ? `✅ Wins ${tier.rewardPercentage}%` : '❌';
-          console.log(`${i + 1}. ${status} Portfolio ${p.portfolioId}: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`);
+          const tier = tiers.find((t) => t.position === i + 1);
+          const status = tier ? `✅ Wins ${tier.rewardPercentage}%` : "❌";
+          console.log(
+            `${i + 1}. ${status} Portfolio ${
+              p.portfolioId
+            }: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`
+          );
         }
 
         // Prepare winners array
@@ -755,7 +776,11 @@ class GameService {
           const rewardAmount = (totalPrizePool * BigInt(tier.rewardPercentage)) / 100n;
 
           winners.push({ portfolioData, rewardAmount, rank: tier.position });
-          console.log(`Position ${tier.position}: Portfolio ${portfolioData.portfolioId} wins $${(Number(rewardAmount) / 1e18).toFixed(2)}`);
+          console.log(
+            `Position ${tier.position}: Portfolio ${portfolioData.portfolioId} wins $${(
+              Number(rewardAmount) / 1e18
+            ).toFixed(2)}`
+          );
         }
 
         for (const { portfolioData, rewardAmount, rank } of winners) {
@@ -875,7 +900,7 @@ class GameService {
   async distributeGameRewards(game, batchSize = 50, retryCount = 0, maxRetries = 20) {
     try {
       let excludeId = null;
-      if (game.winCondition.type === "MARLOWE_BAINES" && game.apePortfolio && game.apePortfolio.portfolioId) {
+      if (game.winCondition.type === "MARLOW_BANES" && game.apePortfolio && game.apePortfolio.portfolioId) {
         excludeId = game.apePortfolio.portfolioId;
       }
       const undistributedWinners = game.winners.filter((w) => !w.isRewardDistributed && w.portfolioId !== excludeId);

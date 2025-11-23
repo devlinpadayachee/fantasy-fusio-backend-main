@@ -84,13 +84,13 @@ const gameSchema = new mongoose.Schema(
     winCondition: {
       type: {
         type: String,
-        enum: ["MARLOWE_BAINES", "EQUAL_DISTRIBUTE", "TIERED"],
+        enum: ["MARLOW_BANES", "EQUAL_DISTRIBUTE", "TIERED"],
         required: true,
       },
       config: {
         type: mongoose.Schema.Types.Mixed,
         required: function () {
-          return this.winCondition.type !== "MARLOWE_BAINES";
+          return this.winCondition.type !== "MARLOW_BANES";
         },
       },
     },

@@ -236,7 +236,7 @@ const gameController = {
       const apeStats = await Portfolio.aggregate([
         {
           $match: {
-            portfolioName: "MARLOWE BAINE",
+            portfolioName: "MARLOW BANES",
             status: { $ne: "PENDING" },
           },
         },

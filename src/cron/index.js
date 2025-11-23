@@ -182,7 +182,7 @@ exports.initializeCronJobs = () => {
               isApe: true,
             });
 
-            if (!existingApePortfolio && game.winCondition.type === "MARLOWE_BAINES") {
+            if (!existingApePortfolio && game.winCondition.type === "MARLOW_BANES") {
               console.log("Generating APE portfolio");
               const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
               game.apePortfolio = { portfolioId: apePortfolioId };
@@ -191,7 +191,7 @@ exports.initializeCronJobs = () => {
               console.log(`Ape portfolio already exists for game ${game.gameId}, skipping generation`);
             }
 
-            if (game.winCondition.type === "MARLOWE_BAINES" && (!game.apePortfolio || !game.apePortfolio.portfolioId)) {
+            if (game.winCondition.type === "MARLOW_BANES" && (!game.apePortfolio || !game.apePortfolio.portfolioId)) {
               continue;
             }
 

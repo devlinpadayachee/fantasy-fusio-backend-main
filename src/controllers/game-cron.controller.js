@@ -10,9 +10,9 @@ function validateWinCondition(winCondition) {
         return { valid: false, message: 'winCondition.config is required' };
     }
     switch (winCondition.type) {
-        case 'MARLOWE_BAINES':
+        case 'MARLOW_BANES':
             if (Object.keys(winCondition.config).length !== 0) {
-                return { valid: false, message: 'winCondition.config must be empty object for MARLOWE_BAINES' };
+                return { valid: false, message: 'winCondition.config must be empty object for MARLOW_BANES' };
             }
             break;
         case 'EQUAL_DISTRIBUTE':
@@ -57,7 +57,7 @@ exports.createGameCron = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error('Invalid creationTime format. Please use ISO 8601 format (e.g., 2025-08-18T16:37:00.000Z)');
     }
-    
+
     // Check if creationTime is more than 1 hour in the past
     const now = new Date();
     const oneHourInMs = 60 * 60 * 1000; // 1 hour in milliseconds
@@ -67,7 +67,7 @@ exports.createGameCron = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error('Creation time cannot be more than 1 hour in the past');
     }
-    
+
     req.body.creationTime = creationTime;
   }
 
