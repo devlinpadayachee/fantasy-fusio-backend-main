@@ -25,7 +25,7 @@ Added deterministic tie-breaker using `createdAt` timestamp:
 
 ### Files Changed
 - `src/services/game.service.js` (lines 366, 556, 710)
-  - MARLOWE_BAINES sorting
+  - MARLOW_BANES sorting
   - EQUAL_DISTRIBUTE sorting
   - TIERED sorting
 
@@ -206,7 +206,7 @@ Added detailed logging at every stage:
 ```
 ========== WINNER CALCULATION START: Game 123 ==========
 ✅ Validation passed: 150 portfolios, 20 assets
-Win Condition: MARLOWE_BAINES
+Win Condition: MARLOW_BANES
 ```
 
 #### B. Game-Specific Details

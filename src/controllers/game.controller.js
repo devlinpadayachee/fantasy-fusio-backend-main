@@ -72,7 +72,7 @@ const gameController = {
 
   // Get global leaderboard with all-time stats and last game winners
   getGlobalLeaderboard: asyncHandler(async (req, res) => {
-    const ethers = require('ethers');
+    const ethers = require("ethers");
 
     // Helper function to convert wei to USDC dollars
     const weiToUSDC = (weiValue) => {
@@ -109,8 +109,7 @@ const gameController = {
       const cacheTTL = 5 * 60 * 1000; // 5 minutes cache
 
       // Try to get from simple in-memory cache (could be upgraded to Redis)
-      if (global.communityStatsCache &&
-          Date.now() - global.communityStatsCache.timestamp < cacheTTL) {
+      if (global.communityStatsCache && Date.now() - global.communityStatsCache.timestamp < cacheTTL) {
         communityStats = global.communityStatsCache.data;
       } else {
         // 1. Total prize pool distributed - optimized: only fetch prize pool field
@@ -118,10 +117,10 @@ const gameController = {
         // This is cached so it only runs every 5 minutes
         const completedGames = await Game.find({
           status: "COMPLETED",
-          totalPrizePool: { $exists: true, $ne: null, $ne: "" }
+          totalPrizePool: { $exists: true, $ne: null, $ne: "" },
         })
-        .select("totalPrizePool")
-        .lean(); // Use lean() for better performance
+          .select("totalPrizePool")
+          .lean(); // Use lean() for better performance
 
         let totalPrizePoolWei = BigInt(0);
         for (const game of completedGames) {
@@ -196,9 +195,7 @@ const gameController = {
         allWinners.length > 0
           ? await Promise.all(
               allWinners
-                .sort(
-                  (a, b) => b.performancePercentage - a.performancePercentage
-                )
+                .sort((a, b) => b.performancePercentage - a.performancePercentage)
                 .slice(0, 3)
                 .map(async (winner, index) => {
                   // Get portfolio details for reward
@@ -207,10 +204,7 @@ const gameController = {
                   });
 
                   // Get user details including profile image
-                  const user = await User.findById(
-                    winner.userId,
-                    "username address profileImage"
-                  );
+                  const user = await User.findById(winner.userId, "username address profileImage");
 
                   const rewardWei = portfolio?.gameOutcome?.reward || 0;
                   const rewardUSDC = weiToUSDC(rewardWei);
@@ -243,11 +237,7 @@ const gameController = {
                   $expr: { $eq: ["$userId", "$$userId"] },
                   status: { $ne: "PENDING" },
                   createdAt: {
-                    $gte: new Date(
-                      new Date().getFullYear(),
-                      new Date().getMonth(),
-                      1
-                    ),
+                    $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
                   },
                 },
               },
@@ -279,10 +269,7 @@ const gameController = {
         {
           $project: {
             username: {
-              $ifNull: [
-                "$username",
-                { $concat: [{ $substr: ["$address", 0, 8] }, "..."] },
-              ],
+              $ifNull: ["$username", { $concat: [{ $substr: ["$address", 0, 8] }, "..."] }],
             },
             profileImage: 1,
             totalPortfolios: 1,
@@ -300,15 +287,7 @@ const gameController = {
       const leaderboard = topUsers.map((user, index) => ({
         ...user,
         totalEarnings: weiToUSDC(user.totalEarnings), // Convert to USDC
-        position: `${index + 1}${
-          index + 1 === 1
-            ? "st"
-            : index + 1 === 2
-            ? "nd"
-            : index + 1 === 3
-            ? "rd"
-            : "th"
-        }`,
+        position: `${index + 1}${index + 1 === 1 ? "st" : index + 1 === 2 ? "nd" : index + 1 === 3 ? "rd" : "th"}`,
       }));
 
       // Get Ape's portfolio stats
@@ -342,10 +321,7 @@ const gameController = {
                 {
                   $round: [
                     {
-                      $multiply: [
-                        { $divide: ["$wonGames", "$totalGames"] },
-                        100,
-                      ],
+                      $multiply: [{ $divide: ["$wonGames", "$totalGames"] }, 100],
                     },
                     2,
                   ],
@@ -474,7 +450,7 @@ const gameController = {
 
   // Get game history with filters
   getGameHistory: asyncHandler(async (req, res) => {
-    const ethers = require('ethers');
+    const ethers = require("ethers");
     const { type, limit = 10, page = 1 } = req.query;
     const userId = req.user._id;
 
@@ -517,10 +493,12 @@ const gameController = {
         const portfolioObj = p.toObject ? p.toObject() : p;
         return {
           ...portfolioObj,
-          gameOutcome: portfolioObj.gameOutcome ? {
-            ...portfolioObj.gameOutcome,
-            reward: weiToUSDC(portfolioObj.gameOutcome.reward),
-          } : null,
+          gameOutcome: portfolioObj.gameOutcome
+            ? {
+                ...portfolioObj.gameOutcome,
+                reward: weiToUSDC(portfolioObj.gameOutcome.reward),
+              }
+            : null,
         };
       }),
       pagination: {
@@ -535,19 +513,14 @@ const gameController = {
   // Get detailed game statistics
   getGameDetails: asyncHandler(async (req, res) => {
     const { gameId } = req.params;
-    const game = await Game.findOne({ gameId }).populate(
-      "winners.userId",
-      "username profileImage"
-    );
+    const game = await Game.findOne({ gameId }).populate("winners.userId", "username profileImage");
 
     if (!game) {
       return res.status(404).json({ error: "Game not found" });
     }
 
     const stats = await gameService.getGameStatistics(gameId);
-    const apePortfolio = await portfolioService.getPortfolioDetails(
-      game.apePortfolio.portfolioId
-    );
+    const apePortfolio = await portfolioService.getPortfolioDetails(game.apePortfolio.portfolioId);
 
     res.json({
       game: game.toObject(),
@@ -582,12 +555,8 @@ const gameController = {
       return res.json({ status: "NO_ACTIVE_PORTFOLIO" });
     }
 
-    const comparison = await portfolioService.getPortfolioComparison(
-      portfolio.portfolioId
-    );
-    const history = await portfolioService.getPortfolioHistory(
-      portfolio.portfolioId
-    );
+    const comparison = await portfolioService.getPortfolioComparison(portfolio.portfolioId);
+    const history = await portfolioService.getPortfolioHistory(portfolio.portfolioId);
 
     res.json({
       portfolio,
@@ -600,9 +569,7 @@ const gameController = {
   getPortfolioDetails: asyncHandler(async (req, res) => {
     const { portfolioId } = req.params;
     const details = await portfolioService.getPortfolioDetails(portfolioId);
-    const comparison = await portfolioService.getPortfolioComparison(
-      portfolioId
-    );
+    const comparison = await portfolioService.getPortfolioComparison(portfolioId);
     const history = await portfolioService.getPortfolioHistory(portfolioId);
 
     res.json({
@@ -617,19 +584,14 @@ const gameController = {
     const { portfolioId } = req.params;
     const { period = "7d" } = req.query;
 
-    const history = await portfolioService.getPortfolioHistory(
-      portfolioId,
-      period
-    );
+    const history = await portfolioService.getPortfolioHistory(portfolioId, period);
     res.json(history);
   }),
 
   // Compare portfolio against the Ape
   getPortfolioComparison: asyncHandler(async (req, res) => {
     const { portfolioId } = req.params;
-    const comparison = await portfolioService.getPortfolioComparison(
-      portfolioId
-    );
+    const comparison = await portfolioService.getPortfolioComparison(portfolioId);
     res.json(comparison);
   }),
 
@@ -674,7 +636,7 @@ const gameController = {
 
   // Get USDC balance for the user
   getUSDCBalance: asyncHandler(async (req, res) => {
-    const ethers = require('ethers');
+    const ethers = require("ethers");
     const address = req.user.wallet;
     try {
       const balance = await blockchainService.getUSDCBalance(address);
@@ -694,7 +656,7 @@ const gameController = {
 
   // Get required USDC approval for the user
   getRequiredApproval: asyncHandler(async (req, res) => {
-    const ethers = require('ethers');
+    const ethers = require("ethers");
     const { gameId } = req.params;
     const address = req.user.address;
     try {

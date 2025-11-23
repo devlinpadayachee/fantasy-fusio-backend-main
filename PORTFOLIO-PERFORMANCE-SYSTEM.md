@@ -629,7 +629,7 @@ MODELS
 SERVICES
 ├─ price.service.js                 → Update DeFi/TradFi prices from APIs
 ├─ game.service.js (lines 310-748)  → calculateGameWinners() logic
-│   ├─ lines 350-406                → MARLOWE_BAINES
+│   ├─ lines 350-406                → MARLOW_BANES
 │   ├─ lines 479-537                → EQUAL_DISTRIBUTE
 │   └─ lines 609-686                → TIERED
 └─ blockchain.service.js            → Distribute rewards on-chain

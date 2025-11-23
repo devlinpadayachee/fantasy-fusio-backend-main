@@ -205,15 +205,6 @@ const authController = {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Fetch real-time USDC balance from blockchain (in wei)
-    let currentBalanceWei = user.currentBalance || "0";
-    try {
-      currentBalanceWei = await blockchainService.getUSDCBalance(user.address);
-    } catch (error) {
-      console.error("Error fetching USDC balance:", error);
-      // Fallback to DB balance or keep 0 if DB is 0
-    }
-
     // Helper function to convert wei to USDC dollars
     const weiToUSDC = (weiValue) => {
       if (!weiValue) return 0;
@@ -221,7 +212,17 @@ const authController = {
       return parseFloat(ethers.utils.formatUnits(weiStr, 18));
     };
 
-    console.log("user", user);
+    // Fetch withdrawable balance from smart contract (source of truth)
+    // This is what users can actually withdraw, same as withdraw page
+    let withdrawableBalance = 0;
+    try {
+      const withdrawableBalanceWei = await blockchainService.getUserBalances(user.address);
+      withdrawableBalance = weiToUSDC(withdrawableBalanceWei);
+    } catch (error) {
+      console.error("Error fetching withdrawable balance:", error);
+      // Fallback to DB balance if blockchain call fails
+      withdrawableBalance = weiToUSDC(user.currentBalance || "0");
+    }
 
     res.json({
       user: {
@@ -234,7 +235,7 @@ const authController = {
         gamesWon: user.gamesWon,
         uniqueGamesWon: user.uniqueGamesWon,
         totalEarnings: weiToUSDC(user.totalEarnings), // Convert to dollars
-        currentBalance: weiToUSDC(currentBalanceWei), // Convert to dollars
+        currentBalance: withdrawableBalance, // Withdrawable balance from blockchain (matches withdraw page)
         lockedBalance: weiToUSDC(user.lockedBalance), // Convert to dollars
       },
     });
