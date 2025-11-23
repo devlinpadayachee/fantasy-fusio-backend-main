@@ -277,8 +277,8 @@ class TransactionService {
         throw new Error("User not found");
       }
 
-      // Get withdrawable balance from smart contract
-      const withdrawableBalance = await blockchainService.getUserBalances(user.address);
+      // Get withdrawable balance from smart contract (returns wei)
+      const withdrawableBalanceWei = await blockchainService.getUserBalances(user.address);
 
       // Get locked portfolios with their game info to calculate actual locked amounts
       const lockedPortfolios = await Portfolio.find({
@@ -322,9 +322,10 @@ class TransactionService {
         return parseFloat(ethers.utils.formatUnits(weiStr, 18));
       };
 
+      // Convert all wei values to dollars before returning
       return {
         totalWinnings: weiToUSDC(user.totalEarnings),
-        withdrawableBalance: weiToUSDC(withdrawableBalance),
+        withdrawableBalance: weiToUSDC(withdrawableBalanceWei),
         lockedBalance: weiToUSDC(totalLockedWei.toString()),
         lossBalance: weiToUSDC(totalLossWei.toString()),
         walletBalance: weiToUSDC(walletBalanceWei),

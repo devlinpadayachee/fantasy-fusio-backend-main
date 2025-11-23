@@ -7,21 +7,29 @@ const transactionController = {
     // Process entry fee payment
     processEntryFee: asyncHandler(async (req, res) => {
         const userId = req.user._id;
+        const { gameId } = req.body;
+
+        if (!gameId) {
+            return res.status(400).json({ error: 'gameId is required' });
+        }
 
         // Check if user has sufficient USDC allowance
         const user = await User.findById(userId);
-        const { needsApproval, requiredAmount } = await blockchainService.checkUSDCAllowance(user.address);
+        const allowanceCheck = await blockchainService.checkUSDCAllowance(user.address, gameId);
 
-        if (needsApproval) {
+        if (allowanceCheck.needsApproval) {
+            const ethers = require('ethers');
+            const weiToUSDC = (wei) => parseFloat(ethers.utils.formatUnits(String(wei), 18));
+
             return res.status(400).json({
                 error: 'Insufficient USDC allowance',
-                requiredAmount,
-                currentAllowance: await blockchainService.getUSDCBalance(user.address)
+                requiredAmount: weiToUSDC(allowanceCheck.requiredAmount),
+                currentAllowance: weiToUSDC(allowanceCheck.currentAllowance)
             });
         }
 
         // Process entry fee
-        const transaction = await transactionService.processEntryFee(userId);
+        const transaction = await transactionService.processEntryFee(userId, gameId);
 
         res.json({
             transaction,
@@ -168,10 +176,10 @@ const transactionController = {
     getUserBalance: asyncHandler(async (req, res) => {
         const ethers = require('ethers');
         const userId = req.user._id;
+        const { gameId } = req.query;
         const user = await User.findById(userId);
 
         const balance = await blockchainService.getUSDCBalance(user.address);
-        const allowance = await blockchainService.checkUSDCAllowance(user.address);
 
         // Helper function to convert wei to USDC dollars
         const weiToUSDC = (weiValue) => {
@@ -180,13 +188,20 @@ const transactionController = {
             return parseFloat(ethers.utils.formatUnits(weiStr, 18));
         };
 
-        res.json({
+        const response = {
             balance: weiToUSDC(balance),
-            allowance: weiToUSDC(allowance.currentAllowance),
             lockedBalance: weiToUSDC(user.lockedBalance),
-            requiredAllowance: weiToUSDC(allowance.requiredAmount),
-            needsApproval: allowance.needsApproval
-        });
+        };
+
+        // Only check allowance if gameId is provided
+        if (gameId) {
+            const allowance = await blockchainService.checkUSDCAllowance(user.address, gameId);
+            response.allowance = weiToUSDC(allowance.currentAllowance);
+            response.requiredAllowance = weiToUSDC(allowance.requiredAmount);
+            response.needsApproval = allowance.needsApproval;
+        }
+
+        res.json(response);
     }),
 
     // Get transaction statistics

@@ -29,7 +29,13 @@ class BlockchainService {
   async checkUSDCAllowance(userAddress, gameId) {
     try {
       const requiredAmount = await this.contract.getRequiredUSDCApproval(userAddress, gameId);
-      return requiredAmount.toString();
+      const currentAllowance = await this.usdcContract.allowance(userAddress, config.blockchain.contractAddress);
+
+      return {
+        needsApproval: currentAllowance.lt(requiredAmount),
+        requiredAmount: requiredAmount.toString(), // wei string
+        currentAllowance: currentAllowance.toString(), // wei string
+      };
     } catch (error) {
       throw new Error(`Failed to check USDC allowance: ${error.message}`);
     }
@@ -267,7 +273,8 @@ class BlockchainService {
   async getUserBalances(userAddress) {
     try {
       const balance = await this.contract.userBalance(userAddress);
-      return parseFloat(ethers.utils.formatUnits(balance));
+      // Return raw wei value as string (blockchain always returns wei)
+      return balance.toString();
     } catch (error) {
       throw new Error(`Failed to get user balance: ${error.message}`);
     }

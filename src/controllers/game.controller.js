@@ -567,28 +567,20 @@ const gameController = {
     );
   }),
 
-  // Get USDC balance for the user
+  // Get USDC balance for the user (returns wei for blockchain interactions)
   getBalanceApproval: asyncHandler(async (req, res) => {
-    const ethers = require('ethers');
     const { gameId } = req.params;
     const userAddress = req.user.address;
     try {
       const balance = await blockchainService.getUSDCBalance(userAddress);
-      const requiredApproval = await blockchainService.checkUSDCAllowance(
-        userAddress,
-        gameId
-      );
+      const approvalData = await blockchainService.checkUSDCAllowance(userAddress, gameId);
 
-      // Helper function to convert wei to USDC dollars
-      const weiToUSDC = (weiValue) => {
-        if (!weiValue) return 0;
-        const weiStr = String(weiValue);
-        return parseFloat(ethers.utils.formatUnits(weiStr, 18));
-      };
-
+      // Return wei strings for frontend blockchain interactions
       res.json({
-        balance: weiToUSDC(balance),
-        requiredApproval: typeof requiredApproval === 'object' ? weiToUSDC(requiredApproval.requiredAmount || requiredApproval) : weiToUSDC(requiredApproval)
+        balance: balance, // wei string
+        requiredApproval: approvalData.requiredAmount, // wei string
+        needsApproval: approvalData.needsApproval,
+        currentAllowance: approvalData.currentAllowance, // wei string
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -617,11 +609,24 @@ const gameController = {
 
   // Get required USDC approval for the user
   getRequiredApproval: asyncHandler(async (req, res) => {
+    const ethers = require('ethers');
     const { gameId } = req.params;
-    const address = req.user.wallet; // Assuming the user's wallet address is stored in req.user
+    const address = req.user.address;
     try {
-      const approvalData = await blockchainService.checkUSDCAllowance(address);
-      res.json(approvalData);
+      const approvalData = await blockchainService.checkUSDCAllowance(address, gameId);
+
+      // Helper function to convert wei to USDC dollars
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        const weiStr = String(weiValue);
+        return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+      };
+
+      res.json({
+        needsApproval: approvalData.needsApproval,
+        requiredAmount: weiToUSDC(approvalData.requiredAmount),
+        currentAllowance: weiToUSDC(approvalData.currentAllowance),
+      });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
