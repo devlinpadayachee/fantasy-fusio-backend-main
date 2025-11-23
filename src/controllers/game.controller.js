@@ -102,6 +102,85 @@ const gameController = {
       });
       const upcomingGames = await Game.find({ status: "UPCOMING" }).limit(2);
 
+      // Calculate true community-wide statistics (optimized)
+      // Use cached stats if available, otherwise calculate
+      let communityStats;
+      const cacheKey = "communityStats";
+      const cacheTTL = 5 * 60 * 1000; // 5 minutes cache
+
+      // Try to get from simple in-memory cache (could be upgraded to Redis)
+      if (global.communityStatsCache &&
+          Date.now() - global.communityStatsCache.timestamp < cacheTTL) {
+        communityStats = global.communityStatsCache.data;
+      } else {
+        // 1. Total prize pool distributed - optimized: only fetch prize pool field
+        // Since totalPrizePool is stored as string (wei), we fetch and sum in JS
+        // This is cached so it only runs every 5 minutes
+        const completedGames = await Game.find({
+          status: "COMPLETED",
+          totalPrizePool: { $exists: true, $ne: null, $ne: "" }
+        })
+        .select("totalPrizePool")
+        .lean(); // Use lean() for better performance
+
+        let totalPrizePoolWei = BigInt(0);
+        for (const game of completedGames) {
+          if (game.totalPrizePool) {
+            totalPrizePoolWei += BigInt(game.totalPrizePool);
+          }
+        }
+        const totalPrizePoolUSDC = weiToUSDC(totalPrizePoolWei.toString());
+
+        // 2. User stats - optimized aggregation without expensive $lookup
+        // Calculate average performance directly from portfolios collection
+        const portfolioStats = await Portfolio.aggregate([
+          { $match: { status: { $ne: "PENDING" } } },
+          {
+            $group: {
+              _id: null,
+              avgPerformance: { $avg: "$performancePercentage" },
+              totalPortfolios: { $sum: 1 },
+            },
+          },
+        ]);
+
+        // User count and total earnings from User collection (much faster)
+        // Since totalEarnings is stored as string (wei), we fetch and sum in JS
+        const userStats = await User.find({ totalGamesPlayed: { $gt: 0 } })
+          .select("totalEarnings")
+          .lean(); // Use lean() for better performance
+
+        const userCount = userStats.length;
+        let totalEarningsWei = BigInt(0);
+        for (const user of userStats) {
+          if (user.totalEarnings) {
+            totalEarningsWei += BigInt(user.totalEarnings);
+          }
+        }
+        const totalEarningsUSDC = weiToUSDC(totalEarningsWei.toString());
+        const avgEarnings = userCount > 0 ? totalEarningsUSDC / userCount : 0;
+
+        const portfolioAvg = portfolioStats[0]?.avgPerformance || 0;
+
+        communityStats = {
+          totalPrizePoolDistributed: totalPrizePoolUSDC,
+          avgPerformance: Number(portfolioAvg.toFixed(2)),
+          avgEarnings: Number(avgEarnings.toFixed(2)),
+          totalUsers: userCount,
+        };
+
+        // Cache the result
+        global.communityStatsCache = {
+          data: communityStats,
+          timestamp: Date.now(),
+        };
+      }
+
+      const totalPrizePoolUSDC = communityStats.totalPrizePoolDistributed;
+      const communityAvgPerformance = communityStats.avgPerformance;
+      const communityAvgEarnings = communityStats.avgEarnings;
+      const totalUsers = communityStats.totalUsers;
+
       // Combine and sort all winners from both games
       const allWinners = lastGames.reduce((acc, game) => {
         return acc.concat(
@@ -307,6 +386,12 @@ const gameController = {
         })),
         totalCompletedGamesCount,
         upcomingGames,
+        communityStats: {
+          totalPrizePoolDistributed: totalPrizePoolUSDC,
+          avgPerformance: Number(communityAvgPerformance.toFixed(2)),
+          avgEarnings: Number(communityAvgEarnings.toFixed(2)),
+          totalUsers: totalUsers,
+        },
       });
     } catch (error) {
       console.error("Error getting global leaderboard:", error);
