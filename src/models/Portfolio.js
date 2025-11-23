@@ -142,12 +142,24 @@ portfolioSchema.index({ "assets.assetId": 1 });
 // Methods
 portfolioSchema.methods.calculateValue = async function (prices) {
   let totalValue = 0;
+  const Asset = require("./Asset");
 
   for (const asset of this.assets) {
-    const price = prices[asset.assetId];
-    if (price) {
-      totalValue += price * asset.tokenQty;
+    let price = prices[asset.assetId];
+
+    // If price is missing, try to get last known price from Asset model
+    if (!price || !isFinite(price)) {
+      const assetDoc = await Asset.findOne({ assetId: asset.assetId });
+      if (assetDoc && assetDoc.currentPrice) {
+        price = assetDoc.currentPrice;
+        console.warn(`Using last known price for asset ${asset.assetId}: $${price}`);
+      } else {
+        console.error(`No price available for asset ${asset.assetId} in portfolio ${this.portfolioId}`);
+        throw new Error(`No price available for asset ${asset.assetId}`);
+      }
     }
+
+    totalValue += price * asset.tokenQty;
   }
 
   const currentValue = totalValue;
