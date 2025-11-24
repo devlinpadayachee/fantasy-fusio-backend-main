@@ -482,9 +482,36 @@ class GameService {
         // Mark losing portfolios
         const losingPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue <= apeCurrentValue);
 
-        // Update Ape portfolio status if there are winners
-        if (winningPortfolios.length > 0 && game.apePortfolio && game.apePortfolio.portfolioId) {
-          await Portfolio.updateOne({ portfolioId: game.apePortfolio.portfolioId }, { $set: { status: "LOST" } });
+        // Update Ape portfolio status
+        if (game.apePortfolio && game.apePortfolio.portfolioId) {
+          if (winningPortfolios.length > 0) {
+            // Marlow lost - users beat him
+            await Portfolio.updateOne(
+              { portfolioId: game.apePortfolio.portfolioId },
+              {
+                $set: {
+                  status: "LOST",
+                  "gameOutcome.isWinner": false,
+                  "gameOutcome.reward": "0",
+                  "gameOutcome.settledAt": new Date(),
+                },
+              }
+            );
+          } else {
+            // Marlow won - no users beat him
+            await Portfolio.updateOne(
+              { portfolioId: game.apePortfolio.portfolioId },
+              {
+                $set: {
+                  status: "WON",
+                  "gameOutcome.isWinner": true,
+                  "gameOutcome.reward": "0", // Marlow doesn't get rewards
+                  "gameOutcome.settledAt": new Date(),
+                  "gameOutcome.rank": 1, // Marlow is the winner
+                },
+              }
+            );
+          }
         }
 
         for (const portfolio of losingPortfolios) {
