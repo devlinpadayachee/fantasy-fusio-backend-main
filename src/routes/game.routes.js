@@ -15,7 +15,12 @@ const { authenticate } = require("../middleware/auth");
  */
 router.get("/dashboard", authenticate, portfolioController.getDashboard);
 router.get("/status", gameController.getGameStatus);
-router.get("/leaderboard/global", gameController.getGlobalLeaderboard);
+
+// Separated stats endpoints
+router.get("/stats/community", gameController.getCommunityStats);
+router.get("/stats/leaderboard", gameController.getLeaderboardOnly);
+router.get("/stats/ape", gameController.getApeStats);
+router.get("/stats/week-highlights", gameController.getWeekHighlights);
 router.get("/:gameId/leaderboard", gameController.getLeaderboard);
 router.get("/history", authenticate, gameController.getGameHistory);
 router.get("/upcoming", gameController.getUpcomingGames);
@@ -26,11 +31,7 @@ router.get("/check/:gameId/:portfolioType", gameController.checkGameStatus);
 
 // USDC balance and approval routes
 router.get("/usdc-balance", authenticate, gameController.getUSDCBalance);
-router.get(
-  "/balance/approval/:gameId",
-  authenticate,
-  gameController.getBalanceApproval
-);
+router.get("/balance/approval/:gameId", authenticate, gameController.getBalanceApproval);
 router.get("/required-approval/:gameId", authenticate, gameController.getRequiredApproval);
 
 // Protected routes (require authentication)

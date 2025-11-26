@@ -443,6 +443,395 @@ const gameController = {
     }
   }),
 
+  // Get community stats (lightweight endpoint)
+  getCommunityStats: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
+    try {
+      const cacheKey = "communityStats";
+      const cacheTTL = 5 * 60 * 1000; // 5 minutes cache
+
+      let communityStats;
+      if (global.communityStatsCache && Date.now() - global.communityStatsCache.timestamp < cacheTTL) {
+        communityStats = global.communityStatsCache.data;
+      } else {
+        const completedGames = await Game.find({
+          status: "COMPLETED",
+          totalPrizePool: { $exists: true, $ne: null, $ne: "" },
+        })
+          .select("totalPrizePool")
+          .lean();
+
+        let totalPrizePoolWei = BigInt(0);
+        for (const game of completedGames) {
+          if (game.totalPrizePool) {
+            totalPrizePoolWei += BigInt(game.totalPrizePool);
+          }
+        }
+        const totalPrizePoolUSDC = weiToUSDC(totalPrizePoolWei.toString());
+
+        const portfolioStats = await Portfolio.aggregate([
+          { $match: { status: { $ne: "PENDING" } } },
+          {
+            $group: {
+              _id: null,
+              avgPerformance: { $avg: "$performancePercentage" },
+              totalPortfolios: { $sum: 1 },
+            },
+          },
+        ]);
+
+        const userStats = await User.find({ totalGamesPlayed: { $gt: 0 } })
+          .select("totalEarnings")
+          .lean();
+
+        const userCount = userStats.length;
+        let totalEarningsWei = BigInt(0);
+        for (const user of userStats) {
+          if (user.totalEarnings) {
+            totalEarningsWei += BigInt(user.totalEarnings);
+          }
+        }
+        const totalEarningsUSDC = weiToUSDC(totalEarningsWei.toString());
+        const avgEarnings = userCount > 0 ? totalEarningsUSDC / userCount : 0;
+
+        const portfolioAvg = portfolioStats[0]?.avgPerformance || 0;
+
+        const totalCompletedGamesCount = await Game.countDocuments({ status: "COMPLETED" });
+
+        communityStats = {
+          totalPrizePoolDistributed: totalPrizePoolUSDC,
+          avgPerformance: Number(portfolioAvg.toFixed(2)),
+          avgEarnings: Number(avgEarnings.toFixed(2)),
+          totalUsers: userCount,
+          totalCompletedGamesCount,
+        };
+
+        global.communityStatsCache = {
+          data: communityStats,
+          timestamp: Date.now(),
+        };
+      }
+
+      res.json(communityStats);
+    } catch (error) {
+      console.error("Error getting community stats:", error);
+      throw error;
+    }
+  }),
+
+  // Get leaderboard only (paginated)
+  getLeaderboardOnly: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+    const { page = 1, limit = 20 } = req.query;
+
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
+    try {
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+
+      const topUsers = await User.aggregate([
+        { $match: { totalGamesPlayed: { $gt: 0 } } },
+        {
+          $lookup: {
+            from: "portfolios",
+            let: { userId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$userId", "$$userId"] },
+                  status: { $ne: "PENDING" },
+                  createdAt: {
+                    $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+                  },
+                },
+              },
+            ],
+            as: "portfolios",
+          },
+        },
+        {
+          $addFields: {
+            totalPortfolios: { $size: "$portfolios" },
+            avgPerformance: { $avg: "$portfolios.performancePercentage" },
+          },
+        },
+        {
+          $addFields: {
+            points: {
+              $sum: {
+                $map: {
+                  input: "$portfolios",
+                  as: "portfolio",
+                  in: { $ifNull: ["$$portfolio.performancePercentage", 0] },
+                },
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            username: {
+              $ifNull: ["$username", { $concat: [{ $substr: ["$address", 0, 8] }, "..."] }],
+            },
+            profileImage: 1,
+            totalPortfolios: 1,
+            wins: "$gamesWon",
+            totalEarnings: "$totalEarnings",
+            avgPerformance: { $round: ["$avgPerformance", 2] },
+            points: { $round: ["$points", 2] },
+          },
+        },
+        { $sort: { points: -1, totalEarnings: -1 } },
+        { $skip: skip },
+        { $limit: parseInt(limit) },
+      ]);
+
+      const totalUsers = await User.countDocuments({ totalGamesPlayed: { $gt: 0 } });
+
+      const leaderboard = topUsers.map((user, index) => ({
+        ...user,
+        totalEarnings: weiToUSDC(user.totalEarnings),
+        position: `${skip + index + 1}${
+          skip + index + 1 === 1 ? "st" : skip + index + 1 === 2 ? "nd" : skip + index + 1 === 3 ? "rd" : "th"
+        }`,
+      }));
+
+      res.json({
+        leaderboard,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: totalUsers,
+          pages: Math.ceil(totalUsers / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      console.error("Error getting leaderboard:", error);
+      throw error;
+    }
+  }),
+
+  // Get Ape (Marlow Baines) stats
+  getApeStats: asyncHandler(async (req, res) => {
+    try {
+      const apeStats = await Portfolio.aggregate([
+        {
+          $match: {
+            isApe: true,
+            status: { $ne: "PENDING" },
+          },
+        },
+        {
+          $group: {
+            _id: "$gameType",
+            totalGames: { $sum: 1 },
+            wonGames: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "WON"] }, 1, 0],
+              },
+            },
+            avgPerformance: { $avg: "$performancePercentage" },
+          },
+        },
+        {
+          $project: {
+            gameType: "$_id",
+            totalGames: 1,
+            wonGames: 1,
+            winPercentage: {
+              $cond: [
+                { $gt: ["$totalGames", 0] },
+                {
+                  $round: [
+                    {
+                      $multiply: [{ $divide: ["$wonGames", "$totalGames"] }, 100],
+                    },
+                    2,
+                  ],
+                },
+                0,
+              ],
+            },
+            avgPerformance: { $round: ["$avgPerformance", 2] },
+          },
+        },
+      ]);
+
+      const apePortfolioStats = {
+        name: "Marlow Baines",
+        defi: apeStats.find((s) => s.gameType === "DEFI") || {
+          totalGames: 0,
+          wonGames: 0,
+          winPercentage: 0,
+          avgPerformance: 0,
+        },
+        tradfi: apeStats.find((s) => s.gameType === "TRADFI") || {
+          totalGames: 0,
+          wonGames: 0,
+          winPercentage: 0,
+          avgPerformance: 0,
+        },
+      };
+
+      res.json(apePortfolioStats);
+    } catch (error) {
+      console.error("Error getting ape stats:", error);
+      throw error;
+    }
+  }),
+
+  // Get week highlights
+  getWeekHighlights: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+
+    const weiToUSDC = (weiValue) => {
+      if (!weiValue) return 0;
+      const weiStr = String(weiValue);
+      return parseFloat(ethers.utils.formatUnits(weiStr, 18));
+    };
+
+    try {
+      const startOfWeek = new Date();
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const thisWeekPortfolios = await Portfolio.find({
+        status: "WON",
+        "gameOutcome.settledAt": { $gte: startOfWeek },
+      })
+        .select("portfolioId portfolioName gameId gameType performancePercentage userId gameOutcome.reward")
+        .lean()
+        .limit(1000);
+
+      let formattedWeekHighlights = {
+        biggestWin: null,
+        topPerformer: null,
+        mostWins: null,
+      };
+
+      if (thisWeekPortfolios.length > 0) {
+        const userIds = [...new Set(thisWeekPortfolios.map((p) => p.userId?.toString()).filter(Boolean))];
+        const gameIds = [...new Set(thisWeekPortfolios.map((p) => p.gameId).filter(Boolean))];
+
+        const [users, games] = await Promise.all([
+          User.find({ _id: { $in: userIds } })
+            .select("username address profileImage")
+            .lean(),
+          Game.find({ gameId: { $in: gameIds } })
+            .select("gameId name endTime")
+            .lean(),
+        ]);
+
+        const usersMap = {};
+        users.forEach((u) => {
+          usersMap[u._id.toString()] = u;
+        });
+
+        const gamesMap = {};
+        games.forEach((g) => {
+          gamesMap[g.gameId] = g;
+        });
+
+        const enrichedPortfolios = thisWeekPortfolios
+          .map((p) => {
+            const user = usersMap[p.userId?.toString()];
+            const game = gamesMap[p.gameId];
+            if (!user || !game) return null;
+
+            return {
+              portfolioId: p.portfolioId,
+              portfolioName: p.portfolioName,
+              gameId: p.gameId,
+              gameType: p.gameType,
+              performancePercentage: p.performancePercentage,
+              userId: p.userId?.toString(),
+              reward: p.gameOutcome?.reward || "0",
+              username: user.username || user.address.slice(0, 8) + "...",
+              profileImage: user.profileImage,
+              gameName: game.name,
+              endTime: game.endTime,
+            };
+          })
+          .filter(Boolean);
+
+        if (enrichedPortfolios.length > 0) {
+          const biggestWin = enrichedPortfolios.reduce((max, p) => {
+            const reward = weiToUSDC(p.reward || "0");
+            const maxReward = weiToUSDC(max.reward || "0");
+            return reward > maxReward ? p : max;
+          }, enrichedPortfolios[0]);
+
+          const topPerformer = enrichedPortfolios.reduce((max, p) =>
+            p.performancePercentage > max.performancePercentage ? p : max
+          );
+
+          const winsByUser = {};
+          enrichedPortfolios.forEach((p) => {
+            if (!winsByUser[p.userId]) {
+              winsByUser[p.userId] = {
+                username: p.username,
+                profileImage: p.profileImage,
+                wins: 0,
+                totalReward: 0,
+              };
+            }
+            winsByUser[p.userId].wins += 1;
+            winsByUser[p.userId].totalReward += weiToUSDC(p.reward || "0");
+          });
+
+          const mostWinsUser = Object.values(winsByUser).reduce((max, u) => (u.wins > max.wins ? u : max));
+
+          formattedWeekHighlights = {
+            biggestWin: {
+              username: biggestWin.username,
+              profileImage: biggestWin.profileImage,
+              portfolioId: biggestWin.portfolioId,
+              portfolioName: biggestWin.portfolioName,
+              gameType: biggestWin.gameType,
+              gameId: biggestWin.gameId,
+              gameName: biggestWin.gameName,
+              reward: weiToUSDC(biggestWin.reward || "0"),
+              performance: biggestWin.performancePercentage?.toFixed(2) + "%",
+            },
+            topPerformer: {
+              username: topPerformer.username,
+              profileImage: topPerformer.profileImage,
+              portfolioId: topPerformer.portfolioId,
+              portfolioName: topPerformer.portfolioName,
+              gameType: topPerformer.gameType,
+              gameId: topPerformer.gameId,
+              gameName: topPerformer.gameName,
+              reward: weiToUSDC(topPerformer.reward || "0"),
+              performance: topPerformer.performancePercentage?.toFixed(2) + "%",
+            },
+            mostWins: {
+              username: mostWinsUser.username,
+              profileImage: mostWinsUser.profileImage,
+              wins: mostWinsUser.wins,
+              totalReward: mostWinsUser.totalReward,
+            },
+          };
+        }
+      }
+
+      res.json(formattedWeekHighlights);
+    } catch (error) {
+      console.error("Error getting week highlights:", error);
+      throw error;
+    }
+  }),
+
   // Get game leaderboard with pagination and filters
   getLeaderboard: asyncHandler(async (req, res) => {
     const { gameId } = req.params;
