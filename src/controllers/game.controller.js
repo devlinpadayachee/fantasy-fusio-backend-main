@@ -82,20 +82,6 @@ const gameController = {
     };
 
     try {
-      // Get the single most recent completed game
-      const lastGame = await Game.findOne({
-        status: "COMPLETED",
-        gameType: { $in: ["DEFI", "TRADFI"] },
-      })
-        .sort({ endTime: -1 })
-        .populate({
-          path: "winners",
-          populate: {
-            path: "userId",
-            select: "username address",
-          },
-        });
-
       const totalCompletedGamesCount = await Game.countDocuments({
         status: "COMPLETED",
       });
@@ -179,42 +165,137 @@ const gameController = {
       const communityAvgEarnings = communityStats.avgEarnings;
       const totalUsers = communityStats.totalUsers;
 
-      // Get top 3 winners from the most recent completed game
-      // Winners are already sorted by performance in the game model
-      const lastGameWinners =
-        lastGame && lastGame.winners && lastGame.winners.length > 0
-          ? await Promise.all(
-              lastGame.winners
-                .slice(0, 3) // Take top 3 winners
-                .map(async (winner, index) => {
-                  // Get portfolio details for reward
-                  const portfolio = await Portfolio.findOne({
-                    portfolioId: winner.portfolioId,
-                  });
+      // Get this week's highlights (optimized - parallel queries instead of expensive $lookup)
+      const startOfWeek = new Date();
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Start of week (Sunday)
+      startOfWeek.setHours(0, 0, 0, 0);
 
-                  // Get user details including profile image
-                  const user = await User.findById(winner.userId, "username address profileImage");
+      // Optimized: Get portfolios first, then fetch user/game data in parallel
+      const thisWeekPortfolios = await Portfolio.find({
+        status: "WON",
+        "gameOutcome.settledAt": { $gte: startOfWeek },
+      })
+        .select("portfolioId portfolioName gameId gameType performancePercentage userId gameOutcome.reward")
+        .lean()
+        .limit(1000); // Reasonable limit
 
-                  const rewardWei = portfolio?.gameOutcome?.reward || 0;
-                  const rewardUSDC = weiToUSDC(rewardWei);
+      let formattedWeekHighlights = {
+        biggestWin: null,
+        topPerformer: null,
+        mostWins: null,
+      };
 
-                  return {
-                    username: user.username || user.address.slice(0, 8) + "...",
-                    profileImage: user.profileImage,
-                    portfolioId: portfolio?.portfolioId,
-                    portfolioName: portfolio?.portfolioName,
-                    gameType: lastGame.gameType,
-                    gameId: lastGame.gameId,
-                    gameName: lastGame.name,
-                    endTime: lastGame.endTime,
-                    reward: rewardUSDC, // Convert to USDC
-                    rewardFormatted: `${rewardUSDC.toFixed(2)} USDC`,
-                    performance: winner.performancePercentage.toFixed(2) + "%",
-                    position: ["1st", "2nd", "3rd"][index],
-                  };
-                })
-            )
-          : [];
+      if (thisWeekPortfolios.length > 0) {
+        // Get unique user IDs and game IDs
+        const userIds = [...new Set(thisWeekPortfolios.map((p) => p.userId?.toString()).filter(Boolean))];
+        const gameIds = [...new Set(thisWeekPortfolios.map((p) => p.gameId).filter(Boolean))];
+
+        // Parallel fetch of users and games (much faster than $lookup)
+        const [users, games] = await Promise.all([
+          User.find({ _id: { $in: userIds } })
+            .select("username address profileImage")
+            .lean(),
+          Game.find({ gameId: { $in: gameIds } })
+            .select("gameId name endTime")
+            .lean(),
+        ]);
+
+        // Create lookup maps
+        const usersMap = {};
+        users.forEach((u) => {
+          usersMap[u._id.toString()] = u;
+        });
+
+        const gamesMap = {};
+        games.forEach((g) => {
+          gamesMap[g.gameId] = g;
+        });
+
+        // Enrich portfolios with user/game data
+        const enrichedPortfolios = thisWeekPortfolios
+          .map((p) => {
+            const user = usersMap[p.userId?.toString()];
+            const game = gamesMap[p.gameId];
+            if (!user || !game) return null;
+
+            return {
+              portfolioId: p.portfolioId,
+              portfolioName: p.portfolioName,
+              gameId: p.gameId,
+              gameType: p.gameType,
+              performancePercentage: p.performancePercentage,
+              userId: p.userId?.toString(),
+              reward: p.gameOutcome?.reward || "0",
+              username: user.username || user.address.slice(0, 8) + "...",
+              profileImage: user.profileImage,
+              gameName: game.name,
+              endTime: game.endTime,
+            };
+          })
+          .filter(Boolean);
+
+        if (enrichedPortfolios.length > 0) {
+          // Biggest single win
+          const biggestWin = enrichedPortfolios.reduce((max, p) => {
+            const reward = weiToUSDC(p.reward || "0");
+            const maxReward = weiToUSDC(max.reward || "0");
+            return reward > maxReward ? p : max;
+          }, enrichedPortfolios[0]);
+
+          // Top performer
+          const topPerformer = enrichedPortfolios.reduce((max, p) =>
+            p.performancePercentage > max.performancePercentage ? p : max
+          );
+
+          // Most wins
+          const winsByUser = {};
+          enrichedPortfolios.forEach((p) => {
+            if (!winsByUser[p.userId]) {
+              winsByUser[p.userId] = {
+                username: p.username,
+                profileImage: p.profileImage,
+                wins: 0,
+                totalReward: 0,
+              };
+            }
+            winsByUser[p.userId].wins += 1;
+            winsByUser[p.userId].totalReward += weiToUSDC(p.reward || "0");
+          });
+
+          const mostWinsUser = Object.values(winsByUser).reduce((max, u) => (u.wins > max.wins ? u : max));
+
+          formattedWeekHighlights = {
+            biggestWin: {
+              username: biggestWin.username,
+              profileImage: biggestWin.profileImage,
+              portfolioId: biggestWin.portfolioId,
+              portfolioName: biggestWin.portfolioName,
+              gameType: biggestWin.gameType,
+              gameId: biggestWin.gameId,
+              gameName: biggestWin.gameName,
+              reward: weiToUSDC(biggestWin.reward || "0"),
+              performance: biggestWin.performancePercentage?.toFixed(2) + "%",
+            },
+            topPerformer: {
+              username: topPerformer.username,
+              profileImage: topPerformer.profileImage,
+              portfolioId: topPerformer.portfolioId,
+              portfolioName: topPerformer.portfolioName,
+              gameType: topPerformer.gameType,
+              gameId: topPerformer.gameId,
+              gameName: topPerformer.gameName,
+              reward: weiToUSDC(topPerformer.reward || "0"),
+              performance: topPerformer.performancePercentage?.toFixed(2) + "%",
+            },
+            mostWins: {
+              username: mostWinsUser.username,
+              profileImage: mostWinsUser.profileImage,
+              wins: mostWinsUser.wins,
+              totalReward: mostWinsUser.totalReward,
+            },
+          };
+        }
+      }
 
       // Get all-time top users with non-pending portfolios
       const topUsers = await User.aggregate([
@@ -344,7 +425,7 @@ const gameController = {
       };
 
       res.json({
-        lastGameWinners,
+        weekHighlights: formattedWeekHighlights,
         leaderboard,
         apeStats: apePortfolioStats,
         totalCompletedGamesCount,
