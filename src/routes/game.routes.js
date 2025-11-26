@@ -18,10 +18,10 @@ router.get("/status", gameController.getGameStatus);
 
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);
-router.get("/stats/leaderboard", gameController.getLeaderboardOnly);
+router.get("/stats/leaderboard", gameController.getGlobalLeaderboard);
 router.get("/stats/ape", gameController.getApeStats);
 router.get("/stats/week-highlights", gameController.getWeekHighlights);
-router.get("/:gameId/leaderboard", gameController.getLeaderboard);
+router.get("/:gameId/leaderboard", gameController.getGameLeaderboard);
 router.get("/history", authenticate, gameController.getGameHistory);
 router.get("/upcoming", gameController.getUpcomingGames);
 router.get("/:gameId", gameController.getGameDetails);
