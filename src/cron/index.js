@@ -174,33 +174,41 @@ exports.initializeCronJobs = () => {
           startTime: { $lte: now },
         });
 
+        if (upcomingGames.length > 0) {
+          console.log(`[CRON] Found ${upcomingGames.length} UPCOMING games that should start`);
+        }
+
         for (const game of upcomingGames) {
           try {
+            console.log(`[CRON] Processing game ${game.gameId} (${game.name}) for UPCOMING → ACTIVE`);
+
             // Check if Ape portfolio already exists for this game
             const existingApePortfolio = await Portfolio.findOne({
               gameId: game.gameId,
               isApe: true,
             });
 
-            if (!existingApePortfolio && game.winCondition.type === "MARLOW_BANES") {
-              console.log("Generating APE portfolio");
+            if (!existingApePortfolio && game.winCondition?.type === "MARLOW_BANES") {
+              console.log(`[CRON] Generating APE portfolio for game ${game.gameId}`);
               const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
               game.apePortfolio = { portfolioId: apePortfolioId };
               await game.save();
-            } else {
-              console.log(`Ape portfolio already exists for game ${game.gameId}, skipping generation`);
+              console.log(`[CRON] ✓ APE portfolio ${apePortfolioId} created for game ${game.gameId}`);
+            } else if (existingApePortfolio) {
+              console.log(`[CRON] Ape portfolio already exists for game ${game.gameId}, skipping generation`);
             }
 
-            if (game.winCondition.type === "MARLOW_BANES" && (!game.apePortfolio || !game.apePortfolio.portfolioId)) {
+            if (game.winCondition?.type === "MARLOW_BANES" && (!game.apePortfolio || !game.apePortfolio.portfolioId)) {
+              console.warn(`[CRON] ⚠ Game ${game.gameId} requires APE portfolio but none exists - skipping activation`);
               continue;
             }
 
             await gameService.lockPortfolios(game);
             game.status = "ACTIVE";
             await game.save();
-            logCronExecution(`Updated game ${game.gameId} status to ACTIVE`);
+            console.log(`[CRON] ✓ Game ${game.gameId} transitioned to ACTIVE`);
           } catch (error) {
-            console.error(`Error updating game ${game.gameId} status to ACTIVE:`, error);
+            console.error(`[CRON] ✗ Error activating game ${game.gameId}:`, error.message);
           }
         }
 
@@ -209,12 +217,31 @@ exports.initializeCronJobs = () => {
           endTime: { $lte: now },
         });
 
+        if (activeGames.length > 0) {
+          console.log(`[CRON] Found ${activeGames.length} ACTIVE games that have ended and need processing`);
+        }
+
         for (const game of activeGames) {
           try {
-            logCronExecution(`Process winners for game ${game.gameId}`);
+            logCronExecution(`Transitioning game ${game.gameId} from ACTIVE to UPDATE_VALUES`);
             await gameService.completeGame(game.gameId);
+            console.log(`[CRON] ✓ Game ${game.gameId} transitioned to UPDATE_VALUES`);
           } catch (error) {
-            console.error(`Error status game ${game.gameId}:`, error);
+            console.error(`[CRON] ✗ Error transitioning game ${game.gameId}:`, error.message);
+          }
+        }
+
+        // Recovery: Check for games stuck in processing states for too long
+        const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+        const stuckGames = await Game.find({
+          status: { $in: ["UPDATE_VALUES", "CALCULATING_WINNERS"] },
+          updatedAt: { $lte: fiveMinutesAgo }
+        });
+
+        if (stuckGames.length > 0) {
+          console.warn(`[CRON] ⚠ Found ${stuckGames.length} games stuck in processing states`);
+          for (const game of stuckGames) {
+            console.warn(`[CRON] Stuck game: ${game.gameId} (${game.status}) - last updated ${Math.round((now - game.updatedAt) / 1000 / 60)} min ago`);
           }
         }
       } catch (error) {

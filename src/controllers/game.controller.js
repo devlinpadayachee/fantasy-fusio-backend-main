@@ -62,11 +62,191 @@ const gameController = {
   // New controller method to get upcoming games
   getUpcomingGames: asyncHandler(async (req, res) => {
     try {
-      const upcomingGames = await gameService.getGamesByStatus("UPCOMING");
-      res.json({ games: upcomingGames });
+      // Return both UPCOMING and ACTIVE games (live games)
+      const games = await gameService.getGamesByStatus(["UPCOMING", "ACTIVE"]);
+      res.json({ games });
     } catch (error) {
       console.error("Error fetching upcoming games:", error);
       res.status(500).json({ error: "Failed to fetch upcoming games" });
+    }
+  }),
+
+  // Diagnostic endpoint to check game status distribution
+  getGameDiagnostics: asyncHandler(async (req, res) => {
+    try {
+      const now = new Date();
+
+      // Get count by status
+      const statusCounts = await Game.aggregate([
+        { $group: { _id: "$status", count: { $sum: 1 } } }
+      ]);
+
+      // Find stuck games (ACTIVE but endTime has passed)
+      const stuckActiveGames = await Game.find({
+        status: "ACTIVE",
+        endTime: { $lte: now }
+      }).select("gameId name status startTime endTime updatedAt").lean();
+
+      // Find games stuck in processing states
+      const stuckProcessingGames = await Game.find({
+        status: { $in: ["UPDATE_VALUES", "CALCULATING_WINNERS"] },
+        updatedAt: { $lte: new Date(now.getTime() - 5 * 60 * 1000) } // Stuck for more than 5 minutes
+      }).select("gameId name status startTime endTime updatedAt hasCalculatedWinners isFullyDistributed").lean();
+
+      // Find UPCOMING games that should have started
+      const stuckUpcomingGames = await Game.find({
+        status: "UPCOMING",
+        startTime: { $lte: now }
+      }).select("gameId name status startTime endTime updatedAt").lean();
+
+      res.json({
+        currentTime: now,
+        statusCounts: statusCounts.reduce((acc, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {}),
+        stuckGames: {
+          activeButEnded: stuckActiveGames.map(g => ({
+            ...g,
+            endedAgo: Math.round((now - new Date(g.endTime)) / 1000 / 60) + " minutes"
+          })),
+          stuckInProcessing: stuckProcessingGames.map(g => ({
+            ...g,
+            stuckFor: Math.round((now - new Date(g.updatedAt)) / 1000 / 60) + " minutes"
+          })),
+          upcomingButStarted: stuckUpcomingGames.map(g => ({
+            ...g,
+            startedAgo: Math.round((now - new Date(g.startTime)) / 1000 / 60) + " minutes"
+          }))
+        }
+      });
+    } catch (error) {
+      console.error("Error fetching game diagnostics:", error);
+      res.status(500).json({ error: "Failed to fetch diagnostics" });
+    }
+  }),
+
+  // Fix stuck games manually
+  fixStuckGames: asyncHandler(async (req, res) => {
+    try {
+      const now = new Date();
+      const results = {
+        activeToUpdateValues: [],
+        upcomingToActive: [],
+        skipped: [],
+        errors: []
+      };
+
+      // 1. Fix ACTIVE games that have ended - transition to UPDATE_VALUES
+      const stuckActiveGames = await Game.find({
+        status: "ACTIVE",
+        endTime: { $lte: now }
+      });
+
+      for (const game of stuckActiveGames) {
+        try {
+          game.status = "UPDATE_VALUES";
+          game.updatedAt = now;
+          await game.save();
+          results.activeToUpdateValues.push({
+            gameId: game.gameId,
+            name: game.name,
+            newStatus: "UPDATE_VALUES"
+          });
+          console.log(`[FIX] Game ${game.gameId} forced from ACTIVE to UPDATE_VALUES`);
+        } catch (error) {
+          results.errors.push({
+            gameId: game.gameId,
+            error: error.message
+          });
+        }
+      }
+
+      // 2. Fix UPCOMING games that should have started - transition to ACTIVE
+      const stuckUpcomingGames = await Game.find({
+        status: "UPCOMING",
+        startTime: { $lte: now },
+        endTime: { $gt: now } // Only if game hasn't ended yet
+      });
+
+      for (const game of stuckUpcomingGames) {
+        try {
+          // Check for APE portfolio requirement
+          if (game.winCondition?.type === "MARLOW_BANES") {
+            const apePortfolio = await Portfolio.findOne({
+              gameId: game.gameId,
+              isApe: true
+            });
+
+            if (!apePortfolio && !game.apePortfolio?.portfolioId) {
+              // Try to generate APE portfolio
+              console.log(`[FIX] Generating APE portfolio for game ${game.gameId}`);
+              const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
+              game.apePortfolio = { portfolioId: apePortfolioId };
+            }
+          }
+
+          // Lock portfolios and activate
+          await gameService.lockPortfolios(game);
+          game.status = "ACTIVE";
+          game.updatedAt = now;
+          await game.save();
+
+          results.upcomingToActive.push({
+            gameId: game.gameId,
+            name: game.name,
+            newStatus: "ACTIVE"
+          });
+          console.log(`[FIX] Game ${game.gameId} forced from UPCOMING to ACTIVE`);
+        } catch (error) {
+          results.errors.push({
+            gameId: game.gameId,
+            error: error.message
+          });
+        }
+      }
+
+      // 3. Skip UPCOMING games that have already ended (mark as COMPLETED directly)
+      const expiredUpcomingGames = await Game.find({
+        status: "UPCOMING",
+        endTime: { $lte: now }
+      });
+
+      for (const game of expiredUpcomingGames) {
+        try {
+          game.status = "COMPLETED";
+          game.error = "Game expired without starting - auto-completed";
+          game.updatedAt = now;
+          await game.save();
+          results.skipped.push({
+            gameId: game.gameId,
+            name: game.name,
+            reason: "Expired without starting",
+            newStatus: "COMPLETED"
+          });
+          console.log(`[FIX] Game ${game.gameId} expired without starting - marked COMPLETED`);
+        } catch (error) {
+          results.errors.push({
+            gameId: game.gameId,
+            error: error.message
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: "Stuck games processed",
+        results,
+        summary: {
+          activeToUpdateValues: results.activeToUpdateValues.length,
+          upcomingToActive: results.upcomingToActive.length,
+          skipped: results.skipped.length,
+          errors: results.errors.length
+        }
+      });
+    } catch (error) {
+      console.error("Error fixing stuck games:", error);
+      res.status(500).json({ error: "Failed to fix stuck games" });
     }
   }),
 

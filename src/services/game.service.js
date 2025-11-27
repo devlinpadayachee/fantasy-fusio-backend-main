@@ -90,10 +90,11 @@ class GameService {
     }
   }
 
-  // New method to get games by status
+  // New method to get games by status (supports array of statuses)
   async getGamesByStatus(status) {
     try {
-      const games = await Game.find({ status: status }).sort({ startTime: 1 });
+      const query = Array.isArray(status) ? { status: { $in: status } } : { status: status };
+      const games = await Game.find(query).sort({ startTime: 1 });
       return games;
     } catch (error) {
       console.error(`Error fetching games with status ${status}:`, error);
