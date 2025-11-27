@@ -260,6 +260,7 @@ const gameController = {
       const results = {
         activeToUpdateValues: [],
         upcomingToActive: [],
+        apePortfoliosGenerated: [],
         skipped: [],
         errors: [],
       };
@@ -289,7 +290,60 @@ const gameController = {
         }
       }
 
-      // 2. Fix UPCOMING games that should have started - transition to ACTIVE
+      // 2. Try to generate APE portfolios for MARLOW_BANES games that are missing them
+      const gamesNeedingApe = await Game.find({
+        status: "UPCOMING",
+        "winCondition.type": "MARLOW_BANES",
+        $or: [
+          { apePortfolio: { $exists: false } },
+          { "apePortfolio.portfolioId": { $exists: false } },
+          { "apePortfolio.portfolioId": null }
+        ]
+      });
+
+      for (const game of gamesNeedingApe) {
+        try {
+          // Check if APE portfolio already exists in Portfolio collection
+          const existingApe = await Portfolio.findOne({ gameId: game.gameId, isApe: true });
+
+          if (existingApe) {
+            // Link existing APE portfolio to game
+            game.apePortfolio = { portfolioId: existingApe.portfolioId };
+            await game.save();
+            results.apePortfoliosGenerated.push({
+              gameId: game.gameId,
+              name: game.name,
+              portfolioId: existingApe.portfolioId,
+              action: "linked_existing"
+            });
+            console.log(`[FIX] Linked existing APE portfolio ${existingApe.portfolioId} to game ${game.gameId}`);
+          } else {
+            // Generate new APE portfolio
+            console.log(`[FIX] Generating APE portfolio for game ${game.gameId} (${game.gameType})`);
+            const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
+            game.apePortfolio = { portfolioId: apePortfolioId };
+            await game.save();
+            results.apePortfoliosGenerated.push({
+              gameId: game.gameId,
+              name: game.name,
+              portfolioId: apePortfolioId,
+              action: "generated_new"
+            });
+            console.log(`[FIX] Generated APE portfolio ${apePortfolioId} for game ${game.gameId}`);
+          }
+        } catch (error) {
+          console.error(`[FIX] Failed to generate APE portfolio for game ${game.gameId}:`, error.message);
+          results.errors.push({
+            gameId: game.gameId,
+            error: `APE portfolio generation failed: ${error.message}`,
+            details: error.message.includes("Not enough") ? "Need 8+ active APE assets" :
+                     error.message.includes("APE user not found") ? "APE_USER_ID env var not set" :
+                     "Check server logs for details"
+          });
+        }
+      }
+
+      // 3. Fix UPCOMING games that should have started - transition to ACTIVE
       const stuckUpcomingGames = await Game.find({
         status: "UPCOMING",
         startTime: { $lte: now },
@@ -300,16 +354,10 @@ const gameController = {
         try {
           // Check for APE portfolio requirement
           if (game.winCondition?.type === "MARLOW_BANES") {
-            const apePortfolio = await Portfolio.findOne({
-              gameId: game.gameId,
-              isApe: true,
-            });
-
-            if (!apePortfolio && !game.apePortfolio?.portfolioId) {
-              // Try to generate APE portfolio
-              console.log(`[FIX] Generating APE portfolio for game ${game.gameId}`);
-              const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
-              game.apePortfolio = { portfolioId: apePortfolioId };
+            if (!game.apePortfolio?.portfolioId) {
+              // Skip - APE portfolio still missing (will be in errors from step 2)
+              console.log(`[FIX] Skipping game ${game.gameId} - still missing APE portfolio`);
+              continue;
             }
           }
 
@@ -333,7 +381,7 @@ const gameController = {
         }
       }
 
-      // 3. Skip UPCOMING games that have already ended (mark as COMPLETED directly)
+      // 4. Skip UPCOMING games that have already ended (mark as COMPLETED directly)
       const expiredUpcomingGames = await Game.find({
         status: "UPCOMING",
         endTime: { $lte: now },
@@ -366,6 +414,7 @@ const gameController = {
         results,
         summary: {
           activeToUpdateValues: results.activeToUpdateValues.length,
+          apePortfoliosGenerated: results.apePortfoliosGenerated.length,
           upcomingToActive: results.upcomingToActive.length,
           skipped: results.skipped.length,
           errors: results.errors.length,
