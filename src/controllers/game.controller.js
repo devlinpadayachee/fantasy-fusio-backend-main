@@ -77,27 +77,163 @@ const gameController = {
       const now = new Date();
 
       // Get count by status
-      const statusCounts = await Game.aggregate([
-        { $group: { _id: "$status", count: { $sum: 1 } } }
-      ]);
+      const statusCounts = await Game.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]);
 
       // Find stuck games (ACTIVE but endTime has passed)
       const stuckActiveGames = await Game.find({
         status: "ACTIVE",
-        endTime: { $lte: now }
-      }).select("gameId name status startTime endTime updatedAt").lean();
+        endTime: { $lte: now },
+      })
+        .select("gameId name status startTime endTime updatedAt error winCondition apePortfolio")
+        .lean();
+
+      // Enrich with portfolio counts
+      const activeGamesEnriched = await Promise.all(
+        stuckActiveGames.map(async (game) => {
+          const portfolioCounts = await Portfolio.aggregate([
+            { $match: { gameId: game.gameId } },
+            { $group: { _id: "$status", count: { $sum: 1 } } },
+          ]);
+          const portfoliosByStatus = portfolioCounts.reduce((acc, item) => {
+            acc[item._id] = item.count;
+            return acc;
+          }, {});
+
+          const possibleReasons = [];
+          if (game.error) possibleReasons.push(`Game error: ${game.error}`);
+          if (!portfoliosByStatus.LOCKED && !portfoliosByStatus.WON && !portfoliosByStatus.LOST) {
+            possibleReasons.push("No locked portfolios to process");
+          }
+          if (possibleReasons.length === 0) {
+            possibleReasons.push("Cron job may not be running or processing this game");
+          }
+
+          return {
+            ...game,
+            endedAgo: Math.round((now - new Date(game.endTime)) / 1000 / 60) + " minutes",
+            portfoliosByStatus,
+            totalPortfolios: Object.values(portfoliosByStatus).reduce((a, b) => a + b, 0),
+            possibleReasons,
+          };
+        })
+      );
 
       // Find games stuck in processing states
       const stuckProcessingGames = await Game.find({
         status: { $in: ["UPDATE_VALUES", "CALCULATING_WINNERS"] },
-        updatedAt: { $lte: new Date(now.getTime() - 5 * 60 * 1000) } // Stuck for more than 5 minutes
-      }).select("gameId name status startTime endTime updatedAt hasCalculatedWinners isFullyDistributed").lean();
+        updatedAt: { $lte: new Date(now.getTime() - 5 * 60 * 1000) },
+      })
+        .select(
+          "gameId name status startTime endTime updatedAt hasCalculatedWinners isFullyDistributed error lastProcessedWinnerIndex winCondition"
+        )
+        .lean();
+
+      const processingGamesEnriched = await Promise.all(
+        stuckProcessingGames.map(async (game) => {
+          const portfolioCounts = await Portfolio.aggregate([
+            { $match: { gameId: game.gameId } },
+            { $group: { _id: "$status", count: { $sum: 1 } } },
+          ]);
+          const portfoliosByStatus = portfolioCounts.reduce((acc, item) => {
+            acc[item._id] = item.count;
+            return acc;
+          }, {});
+
+          const possibleReasons = [];
+          if (game.error) possibleReasons.push(`Game error: ${game.error}`);
+
+          if (game.status === "UPDATE_VALUES") {
+            if (!portfoliosByStatus.LOCKED) {
+              possibleReasons.push("No LOCKED portfolios to update values for");
+            } else {
+              possibleReasons.push(`Waiting to update ${portfoliosByStatus.LOCKED} locked portfolios`);
+            }
+          }
+
+          if (game.status === "CALCULATING_WINNERS") {
+            if (!game.hasCalculatedWinners) {
+              possibleReasons.push("Winner calculation has not completed");
+              if (portfoliosByStatus["AWAITING DECISION"]) {
+                possibleReasons.push(`${portfoliosByStatus["AWAITING DECISION"]} portfolios awaiting decision`);
+              }
+            } else if (!game.isFullyDistributed) {
+              possibleReasons.push("Winners calculated but rewards not fully distributed");
+              possibleReasons.push(`Last processed winner index: ${game.lastProcessedWinnerIndex || 0}`);
+            }
+          }
+
+          if (possibleReasons.length === 0) {
+            possibleReasons.push("Unknown - check server logs for errors");
+          }
+
+          return {
+            ...game,
+            stuckFor: Math.round((now - new Date(game.updatedAt)) / 1000 / 60) + " minutes",
+            portfoliosByStatus,
+            totalPortfolios: Object.values(portfoliosByStatus).reduce((a, b) => a + b, 0),
+            possibleReasons,
+          };
+        })
+      );
 
       // Find UPCOMING games that should have started
       const stuckUpcomingGames = await Game.find({
         status: "UPCOMING",
-        startTime: { $lte: now }
-      }).select("gameId name status startTime endTime updatedAt").lean();
+        startTime: { $lte: now },
+      })
+        .select("gameId name status startTime endTime updatedAt winCondition apePortfolio error")
+        .lean();
+
+      const upcomingGamesEnriched = await Promise.all(
+        stuckUpcomingGames.map(async (game) => {
+          const portfolioCounts = await Portfolio.aggregate([
+            { $match: { gameId: game.gameId } },
+            { $group: { _id: "$status", count: { $sum: 1 } } },
+          ]);
+          const portfoliosByStatus = portfolioCounts.reduce((acc, item) => {
+            acc[item._id] = item.count;
+            return acc;
+          }, {});
+
+          // Check for APE portfolio
+          const hasApePortfolio = await Portfolio.exists({ gameId: game.gameId, isApe: true });
+
+          const possibleReasons = [];
+          if (game.error) possibleReasons.push(`Game error: ${game.error}`);
+
+          // Check if game requires APE portfolio but doesn't have one
+          if (game.winCondition?.type === "MARLOW_BANES") {
+            if (!hasApePortfolio && !game.apePortfolio?.portfolioId) {
+              possibleReasons.push("MARLOW_BANES game requires APE portfolio but none exists");
+              possibleReasons.push("APE portfolio generation may have failed");
+            }
+          }
+
+          if (!portfoliosByStatus.PENDING && !portfoliosByStatus.LOCKED) {
+            possibleReasons.push("No player portfolios created for this game");
+          }
+
+          const isExpired = new Date(game.endTime) <= now;
+          if (isExpired) {
+            possibleReasons.push("Game has already expired (endTime passed)");
+          }
+
+          if (possibleReasons.length === 0) {
+            possibleReasons.push("Cron job may not be running or failed to process this game");
+          }
+
+          return {
+            ...game,
+            startedAgo: Math.round((now - new Date(game.startTime)) / 1000 / 60) + " minutes",
+            isExpired,
+            hasApePortfolio: !!hasApePortfolio,
+            requiresApePortfolio: game.winCondition?.type === "MARLOW_BANES",
+            portfoliosByStatus,
+            totalPortfolios: Object.values(portfoliosByStatus).reduce((a, b) => a + b, 0),
+            possibleReasons,
+          };
+        })
+      );
 
       res.json({
         currentTime: now,
@@ -106,19 +242,10 @@ const gameController = {
           return acc;
         }, {}),
         stuckGames: {
-          activeButEnded: stuckActiveGames.map(g => ({
-            ...g,
-            endedAgo: Math.round((now - new Date(g.endTime)) / 1000 / 60) + " minutes"
-          })),
-          stuckInProcessing: stuckProcessingGames.map(g => ({
-            ...g,
-            stuckFor: Math.round((now - new Date(g.updatedAt)) / 1000 / 60) + " minutes"
-          })),
-          upcomingButStarted: stuckUpcomingGames.map(g => ({
-            ...g,
-            startedAgo: Math.round((now - new Date(g.startTime)) / 1000 / 60) + " minutes"
-          }))
-        }
+          activeButEnded: activeGamesEnriched,
+          stuckInProcessing: processingGamesEnriched,
+          upcomingButStarted: upcomingGamesEnriched,
+        },
       });
     } catch (error) {
       console.error("Error fetching game diagnostics:", error);
@@ -134,13 +261,13 @@ const gameController = {
         activeToUpdateValues: [],
         upcomingToActive: [],
         skipped: [],
-        errors: []
+        errors: [],
       };
 
       // 1. Fix ACTIVE games that have ended - transition to UPDATE_VALUES
       const stuckActiveGames = await Game.find({
         status: "ACTIVE",
-        endTime: { $lte: now }
+        endTime: { $lte: now },
       });
 
       for (const game of stuckActiveGames) {
@@ -151,13 +278,13 @@ const gameController = {
           results.activeToUpdateValues.push({
             gameId: game.gameId,
             name: game.name,
-            newStatus: "UPDATE_VALUES"
+            newStatus: "UPDATE_VALUES",
           });
           console.log(`[FIX] Game ${game.gameId} forced from ACTIVE to UPDATE_VALUES`);
         } catch (error) {
           results.errors.push({
             gameId: game.gameId,
-            error: error.message
+            error: error.message,
           });
         }
       }
@@ -166,7 +293,7 @@ const gameController = {
       const stuckUpcomingGames = await Game.find({
         status: "UPCOMING",
         startTime: { $lte: now },
-        endTime: { $gt: now } // Only if game hasn't ended yet
+        endTime: { $gt: now }, // Only if game hasn't ended yet
       });
 
       for (const game of stuckUpcomingGames) {
@@ -175,7 +302,7 @@ const gameController = {
           if (game.winCondition?.type === "MARLOW_BANES") {
             const apePortfolio = await Portfolio.findOne({
               gameId: game.gameId,
-              isApe: true
+              isApe: true,
             });
 
             if (!apePortfolio && !game.apePortfolio?.portfolioId) {
@@ -195,13 +322,13 @@ const gameController = {
           results.upcomingToActive.push({
             gameId: game.gameId,
             name: game.name,
-            newStatus: "ACTIVE"
+            newStatus: "ACTIVE",
           });
           console.log(`[FIX] Game ${game.gameId} forced from UPCOMING to ACTIVE`);
         } catch (error) {
           results.errors.push({
             gameId: game.gameId,
-            error: error.message
+            error: error.message,
           });
         }
       }
@@ -209,7 +336,7 @@ const gameController = {
       // 3. Skip UPCOMING games that have already ended (mark as COMPLETED directly)
       const expiredUpcomingGames = await Game.find({
         status: "UPCOMING",
-        endTime: { $lte: now }
+        endTime: { $lte: now },
       });
 
       for (const game of expiredUpcomingGames) {
@@ -222,13 +349,13 @@ const gameController = {
             gameId: game.gameId,
             name: game.name,
             reason: "Expired without starting",
-            newStatus: "COMPLETED"
+            newStatus: "COMPLETED",
           });
           console.log(`[FIX] Game ${game.gameId} expired without starting - marked COMPLETED`);
         } catch (error) {
           results.errors.push({
             gameId: game.gameId,
-            error: error.message
+            error: error.message,
           });
         }
       }
@@ -241,8 +368,8 @@ const gameController = {
           activeToUpdateValues: results.activeToUpdateValues.length,
           upcomingToActive: results.upcomingToActive.length,
           skipped: results.skipped.length,
-          errors: results.errors.length
-        }
+          errors: results.errors.length,
+        },
       });
     } catch (error) {
       console.error("Error fixing stuck games:", error);
