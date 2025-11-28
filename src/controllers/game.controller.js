@@ -297,8 +297,8 @@ const gameController = {
         $or: [
           { apePortfolio: { $exists: false } },
           { "apePortfolio.portfolioId": { $exists: false } },
-          { "apePortfolio.portfolioId": null }
-        ]
+          { "apePortfolio.portfolioId": null },
+        ],
       });
 
       for (const game of gamesNeedingApe) {
@@ -314,7 +314,7 @@ const gameController = {
               gameId: game.gameId,
               name: game.name,
               portfolioId: existingApe.portfolioId,
-              action: "linked_existing"
+              action: "linked_existing",
             });
             console.log(`[FIX] Linked existing APE portfolio ${existingApe.portfolioId} to game ${game.gameId}`);
           } else {
@@ -327,7 +327,7 @@ const gameController = {
               gameId: game.gameId,
               name: game.name,
               portfolioId: apePortfolioId,
-              action: "generated_new"
+              action: "generated_new",
             });
             console.log(`[FIX] Generated APE portfolio ${apePortfolioId} for game ${game.gameId}`);
           }
@@ -336,9 +336,11 @@ const gameController = {
           results.errors.push({
             gameId: game.gameId,
             error: `APE portfolio generation failed: ${error.message}`,
-            details: error.message.includes("Not enough") ? "Need 8+ active APE assets" :
-                     error.message.includes("APE user not found") ? "APE_USER_ID env var not set" :
-                     "Check server logs for details"
+            details: error.message.includes("Not enough")
+              ? "Need 8+ active APE assets"
+              : error.message.includes("APE user not found")
+              ? "APE_USER_ID env var not set"
+              : "Check server logs for details",
           });
         }
       }
@@ -434,7 +436,9 @@ const gameController = {
             console.log(`[FIX] Game ${game.gameId} had no undistributed winners - marked COMPLETED`);
           } else {
             // Try to distribute rewards
-            console.log(`[FIX] Attempting reward distribution for game ${game.gameId} (${undistributedWinners.length} winners)`);
+            console.log(
+              `[FIX] Attempting reward distribution for game ${game.gameId} (${undistributedWinners.length} winners)`
+            );
             try {
               await gameService.distributeGameRewards(game);
               results.rewardsDistributed.push({
@@ -451,7 +455,7 @@ const gameController = {
                   const portfolio = await Portfolio.findOne({ portfolioId: w.portfolioId });
                   return portfolio?.isApe === true;
                 })
-              ).then(results => results.every(Boolean));
+              ).then((results) => results.every(Boolean));
 
               if (allWinnersAreApe || undistributedWinners.length === 0) {
                 // All winners are APE or none exist - mark as complete
@@ -473,10 +477,21 @@ const gameController = {
           }
         } catch (error) {
           console.error(`[FIX] Failed to process CALCULATING_WINNERS game ${game.gameId}:`, error.message);
+
+          // Provide helpful error messages based on error type
+          let details = "Check server logs for details";
+          if (error.message.includes("INSUFFICIENT_FUNDS") || error.message.includes("insufficient funds")) {
+            details = "⚠️ Admin wallet needs more BNB for gas fees! Send at least 0.01 BNB to cover transaction costs.";
+          } else if (error.message.includes("nonce")) {
+            details = "Transaction nonce issue - try again in a few minutes";
+          } else if (error.message.includes("timeout") || error.message.includes("TIMEOUT")) {
+            details = "Blockchain RPC timeout - network may be congested";
+          }
+
           results.errors.push({
             gameId: game.gameId,
-            error: `Reward distribution failed: ${error.message}`,
-            details: "Check blockchain connection and contract state",
+            error: `Reward distribution failed: ${error.message.substring(0, 200)}...`,
+            details,
           });
         }
       }
