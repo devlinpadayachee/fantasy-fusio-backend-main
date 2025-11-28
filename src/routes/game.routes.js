@@ -15,12 +15,12 @@ const { authenticate, isAdmin } = require("../middleware/auth");
  */
 router.get("/dashboard", authenticate, portfolioController.getDashboard);
 router.get("/status", gameController.getGameStatus);
-router.get("/diagnostics", authenticate, isAdmin, gameController.getGameDiagnostics);
-router.post("/fix-stuck-games", authenticate, isAdmin, gameController.fixStuckGames);
-router.get("/admin-wallet", authenticate, isAdmin, gameController.getAdminWalletInfo);
-router.get("/marlow-earnings", authenticate, isAdmin, gameController.getMarlowEarnings);
-router.post("/withdraw-marlow-earnings/:gameId", authenticate, isAdmin, gameController.withdrawMarlowEarnings);
-router.get("/admin-game-details/:gameId", authenticate, isAdmin, gameController.getAdminGameDetails);
+router.get("/diagnostics", isAdmin, gameController.getGameDiagnostics);
+router.post("/fix-stuck-games", isAdmin, gameController.fixStuckGames);
+router.get("/admin-wallet", isAdmin, gameController.getAdminWalletInfo);
+router.get("/marlow-earnings", isAdmin, gameController.getMarlowEarnings);
+router.post("/withdraw-marlow-earnings/:gameId", isAdmin, gameController.withdrawMarlowEarnings);
+router.get("/admin-game-details/:gameId", isAdmin, gameController.getAdminGameDetails);
 
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);
