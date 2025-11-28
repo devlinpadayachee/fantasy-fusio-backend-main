@@ -408,6 +408,79 @@ const gameController = {
         }
       }
 
+      // 5. Fix CALCULATING_WINNERS games that have winners calculated but rewards not distributed
+      results.rewardsDistributed = [];
+      const stuckCalculatingGames = await Game.find({
+        status: "CALCULATING_WINNERS",
+        hasCalculatedWinners: true,
+      });
+
+      for (const game of stuckCalculatingGames) {
+        try {
+          const undistributedWinners = game.winners.filter((w) => !w.isRewardDistributed);
+
+          if (undistributedWinners.length === 0) {
+            // No winners to distribute - mark as complete
+            game.isFullyDistributed = true;
+            game.status = "COMPLETED";
+            game.updatedAt = now;
+            await game.save();
+            results.rewardsDistributed.push({
+              gameId: game.gameId,
+              name: game.name,
+              action: "marked_complete",
+              reason: "No undistributed winners",
+            });
+            console.log(`[FIX] Game ${game.gameId} had no undistributed winners - marked COMPLETED`);
+          } else {
+            // Try to distribute rewards
+            console.log(`[FIX] Attempting reward distribution for game ${game.gameId} (${undistributedWinners.length} winners)`);
+            try {
+              await gameService.distributeGameRewards(game);
+              results.rewardsDistributed.push({
+                gameId: game.gameId,
+                name: game.name,
+                action: "distributed",
+                winnersProcessed: undistributedWinners.length,
+              });
+              console.log(`[FIX] Successfully distributed rewards for game ${game.gameId}`);
+            } catch (distError) {
+              // If distribution fails, check if all winners are APE (which don't need blockchain)
+              const allWinnersAreApe = await Promise.all(
+                undistributedWinners.map(async (w) => {
+                  const portfolio = await Portfolio.findOne({ portfolioId: w.portfolioId });
+                  return portfolio?.isApe === true;
+                })
+              ).then(results => results.every(Boolean));
+
+              if (allWinnersAreApe || undistributedWinners.length === 0) {
+                // All winners are APE or none exist - mark as complete
+                game.isFullyDistributed = true;
+                game.status = "COMPLETED";
+                game.updatedAt = now;
+                await game.save();
+                results.rewardsDistributed.push({
+                  gameId: game.gameId,
+                  name: game.name,
+                  action: "marked_complete",
+                  reason: "All winners are APE (no blockchain distribution needed)",
+                });
+                console.log(`[FIX] Game ${game.gameId} - all winners are APE, marked COMPLETED`);
+              } else {
+                throw distError;
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`[FIX] Failed to process CALCULATING_WINNERS game ${game.gameId}:`, error.message);
+          results.errors.push({
+            gameId: game.gameId,
+            error: `Reward distribution failed: ${error.message}`,
+            details: "Check blockchain connection and contract state",
+          });
+        }
+      }
+
       res.json({
         success: true,
         message: "Stuck games processed",
@@ -416,6 +489,7 @@ const gameController = {
           activeToUpdateValues: results.activeToUpdateValues.length,
           apePortfoliosGenerated: results.apePortfoliosGenerated.length,
           upcomingToActive: results.upcomingToActive.length,
+          rewardsDistributed: results.rewardsDistributed.length,
           skipped: results.skipped.length,
           errors: results.errors.length,
         },
