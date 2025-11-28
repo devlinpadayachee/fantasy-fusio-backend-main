@@ -18,6 +18,8 @@ router.get("/status", gameController.getGameStatus);
 router.get("/diagnostics", gameController.getGameDiagnostics);
 router.post("/fix-stuck-games", gameController.fixStuckGames);
 router.get("/admin-wallet", gameController.getAdminWalletInfo);
+router.get("/marlow-earnings", gameController.getMarlowEarnings);
+router.post("/withdraw-marlow-earnings/:gameId", gameController.withdrawMarlowEarnings);
 
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);

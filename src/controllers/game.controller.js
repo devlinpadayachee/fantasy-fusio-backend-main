@@ -1310,6 +1310,145 @@ const gameController = {
       res.status(500).json({ error: error.message });
     }
   }),
+
+  // Get Marlow earnings - games where Marlow won and prize pool is unclaimed
+  getMarlowEarnings: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+
+    try {
+      // Find all MARLOW_BANES games that are completed
+      const marlowGames = await Game.find({
+        "winCondition.type": "MARLOW_BANES",
+        status: "COMPLETED",
+      }).sort({ endTime: -1 });
+
+      const earnings = [];
+      let totalUnclaimed = 0;
+
+      for (const game of marlowGames) {
+        try {
+          // Get prize pool info from blockchain
+          const gameDetails = await blockchainService.getGameDetails(game.gameId);
+          const totalPrizePool = parseFloat(ethers.utils.formatUnits(gameDetails.totalPrizePool, 18));
+          const totalDistributed = parseFloat(ethers.utils.formatUnits(gameDetails.totalRewardDistributed, 18));
+          const availableToWithdraw = totalPrizePool - totalDistributed;
+
+          // Check if Marlow won (available > 0 means undistributed funds)
+          const marlowWon = availableToWithdraw > 0.001; // Small threshold for rounding
+
+          // Get APE user info
+          const apeUser = await User.findById(process.env.APE_USER_ID);
+          const isApeInWinners = game.winners.some((w) => w.portfolioId === game.apePortfolio?.portfolioId);
+
+          // Determine win status
+          let winStatus = "PLAYERS_WON";
+          if (marlowWon || isApeInWinners) {
+            winStatus = "MARLOW_WON";
+          } else if (totalDistributed > 0) {
+            winStatus = "PLAYERS_WON";
+          }
+
+          if (availableToWithdraw > 0.001) {
+            totalUnclaimed += availableToWithdraw;
+          }
+
+          earnings.push({
+            gameId: game.gameId,
+            name: game.name,
+            endTime: game.endTime,
+            participantCount: game.participantCount,
+            totalPrizePool: totalPrizePool,
+            totalDistributed: totalDistributed,
+            availableToWithdraw: availableToWithdraw,
+            winStatus: winStatus,
+            winnersCount: game.winners.length,
+            canWithdraw: availableToWithdraw > 0.001,
+            apePortfolioId: game.apePortfolio?.portfolioId,
+          });
+        } catch (error) {
+          console.error(`Error processing game ${game.gameId}:`, error.message);
+          earnings.push({
+            gameId: game.gameId,
+            name: game.name,
+            endTime: game.endTime,
+            error: error.message,
+            canWithdraw: false,
+          });
+        }
+      }
+
+      // Sort by available to withdraw (highest first)
+      earnings.sort((a, b) => (b.availableToWithdraw || 0) - (a.availableToWithdraw || 0));
+
+      res.json({
+        totalUnclaimed: totalUnclaimed,
+        gamesCount: marlowGames.length,
+        gamesWithUnclaimed: earnings.filter((e) => e.canWithdraw).length,
+        earnings: earnings,
+      });
+    } catch (error) {
+      console.error("Error fetching Marlow earnings:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  // Withdraw Marlow earnings from a specific game
+  withdrawMarlowEarnings: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+    const { gameId } = req.params;
+
+    try {
+      // Verify game exists and is MARLOW_BANES type
+      const game = await Game.findOne({
+        gameId: parseInt(gameId),
+        "winCondition.type": "MARLOW_BANES",
+      });
+
+      if (!game) {
+        return res.status(404).json({ error: "Game not found or not a MARLOW_BANES game" });
+      }
+
+      // Get current prize pool info from blockchain
+      const gameDetails = await blockchainService.getGameDetails(parseInt(gameId));
+      const totalPrizePool = BigInt(gameDetails.totalPrizePool);
+      const totalDistributed = BigInt(gameDetails.totalRewardDistributed);
+      const availableToWithdraw = totalPrizePool - totalDistributed;
+
+      if (availableToWithdraw <= 0n) {
+        return res.status(400).json({
+          error: "No funds available to withdraw",
+          totalPrizePool: ethers.utils.formatUnits(totalPrizePool.toString(), 18),
+          totalDistributed: ethers.utils.formatUnits(totalDistributed.toString(), 18),
+        });
+      }
+
+      // Call the contract to withdraw
+      console.log(
+        `[MARLOW] Withdrawing ${ethers.utils.formatUnits(availableToWithdraw.toString(), 18)} USDC from game ${gameId}`
+      );
+
+      const receipt = await blockchainService.withdrawFromPrizePool(parseInt(gameId), availableToWithdraw.toString());
+
+      res.json({
+        success: true,
+        gameId: parseInt(gameId),
+        amountWithdrawn: parseFloat(ethers.utils.formatUnits(availableToWithdraw.toString(), 18)),
+        transactionHash: receipt.transactionHash,
+        message: `Successfully withdrew ${ethers.utils.formatUnits(
+          availableToWithdraw.toString(),
+          18
+        )} USDC from game ${gameId}`,
+      });
+    } catch (error) {
+      console.error(`Error withdrawing from game ${gameId}:`, error);
+      res.status(500).json({
+        error: error.message,
+        details: error.message.includes("INSUFFICIENT_FUNDS")
+          ? "Admin wallet needs more BNB for gas fees"
+          : "Check server logs for details",
+      });
+    }
+  }),
 };
 
 module.exports = gameController;

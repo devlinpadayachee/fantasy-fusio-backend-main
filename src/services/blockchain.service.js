@@ -426,6 +426,30 @@ class BlockchainService {
     }
   }
 
+  // Withdraw undistributed prize pool from a game (admin only)
+  async withdrawFromPrizePool(gameId, amount) {
+    try {
+      console.log(`[BLOCKCHAIN] Withdrawing ${amount} from game ${gameId} prize pool`);
+
+      const receipt = await transactionQueue.addTransaction(async (nonce) => {
+        return await this.contract.adminWithdrawFromPrizePool(gameId, amount, {
+          gasLimit: 300000,
+          nonce,
+        });
+      }, `WithdrawFromPrizePool game ${gameId} amount ${amount}`);
+
+      console.log(`[BLOCKCHAIN] Withdrawal successful: ${receipt.transactionHash}`);
+
+      return {
+        transactionHash: receipt.transactionHash,
+        gameId,
+        amount,
+      };
+    } catch (error) {
+      throw new Error(`Failed to withdraw from prize pool: ${error.message}`);
+    }
+  }
+
   async getPortfolioOwner(portfolioId) {
     try {
       const owner = await this.contract.getPortfolioOwner(portfolioId);
