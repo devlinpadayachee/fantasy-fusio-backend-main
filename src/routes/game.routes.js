@@ -17,6 +17,7 @@ router.get("/dashboard", authenticate, portfolioController.getDashboard);
 router.get("/status", gameController.getGameStatus);
 router.get("/diagnostics", gameController.getGameDiagnostics);
 router.post("/fix-stuck-games", gameController.fixStuckGames);
+router.get("/admin-wallet", gameController.getAdminWalletInfo);
 
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);

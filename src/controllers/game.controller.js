@@ -1207,6 +1207,107 @@ const gameController = {
       res.status(500).json({ error: error.message });
     }
   }),
+
+  // Get admin wallet info and transactions from BSCScan
+  getAdminWalletInfo: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+    const config = require("../config");
+
+    try {
+      const adminWalletAddress = config.blockchain.adminWalletAddress;
+
+      if (!adminWalletAddress) {
+        return res.status(400).json({ error: "Admin wallet address not configured" });
+      }
+
+      // Get current BNB balance
+      const provider = new ethers.providers.JsonRpcProvider(config.blockchain.rpcUrl);
+      const balanceWei = await provider.getBalance(adminWalletAddress);
+      const balanceBNB = parseFloat(ethers.utils.formatEther(balanceWei));
+
+      // Fetch transactions from BSCScan API
+      const bscscanApiKey = process.env.BSCSCAN_API_KEY || "";
+      const bscscanBaseUrl =
+        process.env.NODE_ENV === "production" ? "https://api.bscscan.com/api" : "https://api-testnet.bscscan.com/api";
+
+      // Fetch normal transactions
+      const txResponse = await fetch(
+        `${bscscanBaseUrl}?module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`
+      );
+      const txData = await txResponse.json();
+
+      // Fetch internal transactions (contract interactions)
+      const internalTxResponse = await fetch(
+        `${bscscanBaseUrl}?module=account&action=txlistinternal&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=50&sort=desc&apikey=${bscscanApiKey}`
+      );
+      const internalTxData = await internalTxResponse.json();
+
+      // Process transactions into accounting format
+      const transactions = [];
+
+      if (txData.status === "1" && Array.isArray(txData.result)) {
+        for (const tx of txData.result) {
+          const valueBNB = parseFloat(ethers.utils.formatEther(tx.value || "0"));
+          const gasCostBNB = parseFloat(
+            ethers.utils.formatEther(
+              ethers.BigNumber.from(tx.gasUsed || "0")
+                .mul(ethers.BigNumber.from(tx.gasPrice || "0"))
+                .toString()
+            )
+          );
+
+          const isIncoming = tx.to?.toLowerCase() === adminWalletAddress.toLowerCase();
+          const isOutgoing = tx.from?.toLowerCase() === adminWalletAddress.toLowerCase();
+
+          transactions.push({
+            hash: tx.hash,
+            timestamp: new Date(parseInt(tx.timeStamp) * 1000).toISOString(),
+            type: isIncoming ? "IN" : "OUT",
+            from: tx.from,
+            to: tx.to,
+            valueBNB: valueBNB,
+            gasCostBNB: isOutgoing ? gasCostBNB : 0,
+            status: tx.isError === "0" ? "SUCCESS" : "FAILED",
+            method: tx.functionName ? tx.functionName.split("(")[0] : valueBNB > 0 ? "transfer" : "contract_call",
+            blockNumber: parseInt(tx.blockNumber),
+          });
+        }
+      }
+
+      // Calculate totals
+      const totals = transactions.reduce(
+        (acc, tx) => {
+          if (tx.type === "IN") {
+            acc.totalIn += tx.valueBNB;
+          } else {
+            acc.totalOut += tx.valueBNB;
+            acc.totalGas += tx.gasCostBNB;
+          }
+          return acc;
+        },
+        { totalIn: 0, totalOut: 0, totalGas: 0 }
+      );
+
+      res.json({
+        wallet: {
+          address: adminWalletAddress,
+          balanceBNB: balanceBNB,
+          balanceUSD: null, // Could add price lookup
+        },
+        totals: {
+          totalInBNB: totals.totalIn,
+          totalOutBNB: totals.totalOut,
+          totalGasBNB: totals.totalGas,
+          netFlowBNB: totals.totalIn - totals.totalOut - totals.totalGas,
+        },
+        transactions: transactions.slice(0, 100), // Limit to 100 most recent
+        transactionCount: transactions.length,
+      });
+    } catch (error) {
+      console.error("Error fetching admin wallet info:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
 };
 
 module.exports = gameController;
