@@ -119,8 +119,8 @@ class BlockchainService {
       const bytes32Symbols = symbols.map((symbol) => ethers.utils.formatBytes32String(symbol));
 
       const receipt = await transactionQueue.addTransaction(async (nonce) => {
-        // Get current owner nonce
-        const ownerNonce = await this.contract.ownerNonce();
+        // Get current nonce from contract
+        const ownerNonce = await this.contract.nonce();
 
         // Create message hash for signing
         const messageHash = ethers.utils.solidityKeccak256(
@@ -389,8 +389,8 @@ class BlockchainService {
       const parsedValue = ethers.utils.parseUnits(currentValue.toString(), 6);
 
       const receipt = await transactionQueue.addTransaction(async (nonce) => {
-        // Get current owner nonce
-        const ownerNonce = await this.contract.ownerNonce();
+        // Get current nonce from contract
+        const ownerNonce = await this.contract.nonce();
 
         // Create message hash for signing
         const messageHash = ethers.utils.solidityKeccak256(
