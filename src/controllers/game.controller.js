@@ -1227,19 +1227,22 @@ const gameController = {
       const balanceWei = await provider.getBalance(adminWalletAddress);
       const balanceBNB = parseFloat(ethers.utils.formatEther(balanceWei));
 
-      // Fetch transactions from BSCScan API
+      // Fetch transactions from BSCScan API V2
       const bscscanApiKey = process.env.BSCSCAN_API_KEY || "";
-      const bscscanBaseUrl =
-        process.env.NODE_ENV === "production" ? "https://api.bscscan.com/api" : "https://api-testnet.bscscan.com/api";
+
+      // BSCScan API V2 uses different base URLs
+      const chainId = process.env.NODE_ENV === "production" ? "56" : "97"; // 56 = BSC Mainnet, 97 = BSC Testnet
+      const bscscanBaseUrl = "https://api.bscscan.com/v2/api";
 
       console.log(`[ADMIN_WALLET] Fetching transactions for ${adminWalletAddress}`);
-      console.log(`[ADMIN_WALLET] BSCScan URL: ${bscscanBaseUrl}`);
+      console.log(`[ADMIN_WALLET] Using BSCScan API V2, chainId: ${chainId}`);
       console.log(
         `[ADMIN_WALLET] API Key present: ${bscscanApiKey ? "Yes (" + bscscanApiKey.slice(0, 4) + "...)" : "No"}`
       );
 
-      // Fetch normal transactions
-      const txUrl = `${bscscanBaseUrl}?module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`;
+      // Fetch normal transactions using V2 API
+      const txUrl = `${bscscanBaseUrl}?chainid=${chainId}&module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`;
+      console.log(`[ADMIN_WALLET] Request URL: ${txUrl.replace(bscscanApiKey, "API_KEY_HIDDEN")}`);
       const txResponse = await fetch(txUrl);
       const txData = await txResponse.json();
 
@@ -1325,8 +1328,13 @@ const gameController = {
         transactionCount: transactions.length,
         apiWarning: apiWarning,
         debug: {
-          bscscanResponse: txData.status === "0" ? txData : null,
+          bscscanStatus: txData.status,
+          bscscanMessage: txData.message,
+          bscscanResult: txData.status === "0" ? txData.result : `${transactions.length} transactions`,
           hasApiKey: !!bscscanApiKey,
+          apiKeyPreview: bscscanApiKey ? bscscanApiKey.slice(0, 6) + "..." : "NOT SET",
+          network: process.env.NODE_ENV === "production" ? "mainnet (chainId 56)" : "testnet (chainId 97)",
+          apiVersion: "V2",
         },
       });
     } catch (error) {
