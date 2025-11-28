@@ -157,7 +157,8 @@ class GameService {
     }
   }
 
-  // Generate Ape's portfolio
+  // Generate Ape's portfolio (database-only, no blockchain registration needed)
+  // The APE is a system opponent that doesn't pay entry fees or compete for prize pool
   async generateApePortfolio(gameId, gameType) {
     try {
       const assets = await Asset.find({
@@ -176,6 +177,18 @@ class GameService {
         throw new Error("APE user not found. Please set APE_USER_ID in environment variables.");
       }
 
+      // Check if APE portfolio already exists for this game
+      const existingApePortfolio = await Portfolio.findOne({
+        gameId: gameId,
+        isApe: true,
+      });
+      if (existingApePortfolio) {
+        console.log(
+          `🦍 Marlow Banes portfolio already exists for game ${gameId}: portfolioId=${existingApePortfolio.portfolioId}`
+        );
+        return existingApePortfolio.portfolioId;
+      }
+
       // Randomly select 8 unique assets
       const selectedAssets = this.getRandomAssets(assets, 8);
       const formattedAssets = selectedAssets.map((asset) => asset.symbol);
@@ -186,42 +199,31 @@ class GameService {
         throw new Error("Selected assets must be unique");
       }
 
-      // Predefined allocation values (basis points: 20000 = 20%)
+      // Allocation values represent dollar amounts (20000 = $20,000 = 20% of $100,000 initial)
+      // Total allocations must sum to initialValue ($100,000)
       const allocations = [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000];
+      const INITIAL_VALUE = 100000; // $100,000 initial portfolio value (matches regular portfolios)
 
-      // Get current prices to calculate token quantities
-      const prices = await priceService.getCurrentPrices(selectedAssets);
-      const INITIAL_VALUE = 1000; // $1000 initial portfolio value
-
-      // Map assets to allocations with token quantities
+      // Map assets to allocations (tokenQty will be calculated when portfolio is locked)
       const portfolioAssets = formattedAssets.map((symbol, index) => {
         const dbAsset = selectedAssets.find((a) => a.symbol === symbol);
-        const price = prices[symbol]?.price || dbAsset.currentPrice || 1;
-        const allocationPercent = allocations[index] / 100; // Convert basis points to percentage
-        const tokenQty = (INITIAL_VALUE * (allocationPercent / 100)) / price;
 
         return {
           assetId: dbAsset.assetId,
           symbol: symbol,
           allocation: allocations[index],
-          tokenQty: Number(tokenQty.toFixed(6)),
+          tokenQty: 0, // Will be calculated in lockPortfolios based on price at lock time
         };
       });
 
-      // Create portfolio on blockchain first (gets assigned portfolioId)
-      const { portfolioId } = await blockchainService.createAndLockPortfolio(
-        apeUser._id,
-        apeUser.address,
-        formattedAssets,
-        allocations,
-        portfolioAssets.map((a) => Math.floor(a.tokenQty * 1e6)), // Convert to integer for blockchain
-        gameType,
-        true // isApe = true
-      );
+      // Generate a unique portfolio ID for APE (prefix with 9 to distinguish from regular portfolios)
+      // Format: 9GGGGTTTTTTTT where GGGG = gameId (4 digits), TTTTTTTT = timestamp portion
+      const portfolioId = parseInt(`9${String(gameId).padStart(4, "0")}${Date.now().toString().slice(-8)}`);
 
-      console.log(`🦍 Created Marlow Banes portfolio on blockchain: portfolioId=${portfolioId}`);
+      console.log(`🦍 Creating Marlow Banes portfolio (database-only): portfolioId=${portfolioId}`);
 
-      // Create portfolio in database with blockchain-assigned portfolioId
+      // Create portfolio in database only - no blockchain registration needed
+      // APE doesn't pay entry fees or compete for prize pool
       const portfolio = new Portfolio({
         userId: apeUser._id,
         portfolioName: "MARLOW BANES",
@@ -231,12 +233,13 @@ class GameService {
         assets: portfolioAssets,
         status: "PENDING",
         isLocked: false,
-        lockedAt: Date.now(),
         isApe: true,
         initialValue: INITIAL_VALUE,
         currentValue: INITIAL_VALUE,
       });
       await portfolio.save();
+
+      console.log(`🦍 Marlow Banes portfolio created successfully for game ${gameId}`);
 
       return portfolioId;
     } catch (error) {
@@ -948,6 +951,7 @@ class GameService {
       const batch = undistributedWinners.slice(0, batchSize);
       const portfolioIds = [];
       const amounts = [];
+      const apeWinners = []; // Track APE winners separately (database-only, no blockchain)
 
       for (const winner of batch) {
         const portfolio = await Portfolio.findOne({ portfolioId: winner.portfolioId });
@@ -956,19 +960,45 @@ class GameService {
           continue;
         }
 
+        // APE portfolios are database-only, skip blockchain distribution
+        if (portfolio.isApe) {
+          console.log(`🦍 Skipping blockchain distribution for APE portfolio ${portfolio.portfolioId}`);
+          apeWinners.push({ winner, portfolio });
+          continue;
+        }
+
         portfolioIds.push(winner.portfolioId);
         amounts.push(portfolio.gameOutcome.reward?.toString() || "0");
       }
 
+      // Mark APE winners as distributed (they don't actually receive blockchain rewards)
+      for (const { winner, portfolio } of apeWinners) {
+        await Portfolio.findOneAndUpdate(
+          { portfolioId: portfolio.portfolioId },
+          {
+            $set: {
+              "gameOutcome.rewardTransactionHash": "APE_SYSTEM_WIN",
+            },
+          }
+        );
+        await game.markWinnerRewardDistributed(winner._id, "APE_SYSTEM_WIN");
+        console.log(`🦍 APE portfolio ${portfolio.portfolioId} marked as distributed (no actual blockchain transfer)`);
+      }
+
       if (portfolioIds.length === 0) {
-        console.warn("No valid portfolios found in batch for reward distribution.");
+        // All winners were APE or invalid - check if we need to continue
+        if (undistributedWinners.length > batchSize) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return this.distributeGameRewards(game, batchSize, retryCount, maxRetries);
+        }
+        console.log("No real user portfolios found for blockchain distribution.");
         await game.markFullyDistributed();
         game.status = "COMPLETED";
         await game.save();
         return;
       }
 
-      // Call blockchain batchAssignRewards
+      // Call blockchain batchAssignRewards (only for real user portfolios)
       const result = await blockchainService.batchAssignRewards(game.gameId, portfolioIds, amounts);
 
       // Update portfolios and game winners as distributed
@@ -1066,10 +1096,12 @@ class GameService {
         throw new Error("Game not found or in invalid state");
       }
 
+      // Exclude APE portfolios - they're database-only, not on blockchain
       const portfolios = await Portfolio.find({
         status: "LOCKED",
         isLocked: true,
         gameId: gameId,
+        isApe: { $ne: true },
       })
         .limit(50)
         .sort({ createdAt: 1 });
@@ -1092,6 +1124,25 @@ class GameService {
           await portfolio.save();
         } catch (error) {
           console.error(`Error updating blockchain value for portfolio ${portfolio._id}:`, error);
+        }
+      }
+
+      // Also update APE portfolio values in database (no blockchain call needed)
+      const apePortfolios = await Portfolio.find({
+        status: "LOCKED",
+        isLocked: true,
+        gameId: gameId,
+        isApe: true,
+      });
+
+      for (const apePortfolio of apePortfolios) {
+        try {
+          await apePortfolio.calculateValue(prices);
+          apePortfolio.status = "AWAITING DECISION";
+          await apePortfolio.save();
+          console.log(`🦍 Updated APE portfolio ${apePortfolio.portfolioId} value in database`);
+        } catch (error) {
+          console.error(`Error updating APE portfolio ${apePortfolio._id} value:`, error);
         }
       }
 
