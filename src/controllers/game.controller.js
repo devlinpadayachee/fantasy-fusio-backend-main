@@ -1214,7 +1214,9 @@ const gameController = {
     const config = require("../config");
 
     try {
-      const adminWalletAddress = config.blockchain.adminWalletAddress;
+      // Derive admin wallet address from private key (same as blockchain service)
+      const adminWallet = new ethers.Wallet(config.blockchain.privateKey);
+      const adminWalletAddress = adminWallet.address;
 
       if (!adminWalletAddress) {
         return res.status(400).json({ error: "Admin wallet address not configured" });
