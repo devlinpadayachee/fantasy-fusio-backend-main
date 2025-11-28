@@ -1227,22 +1227,25 @@ const gameController = {
       const balanceWei = await provider.getBalance(adminWalletAddress);
       const balanceBNB = parseFloat(ethers.utils.formatEther(balanceWei));
 
-      // Fetch transactions from BSCScan API
+      // Fetch transactions from Etherscan API V2 (unified multichain endpoint)
+      // Reference: https://docs.etherscan.io/v2-migration
       const bscscanApiKey = process.env.BSCSCAN_API_KEY || "";
 
-      // Use the appropriate BSCScan API endpoint based on network
+      // V2 API uses unified endpoint with chainid parameter
+      // BSC Mainnet: chainid=56, BSC Testnet: chainid=97
       const isMainnet = process.env.NODE_ENV === "production";
-      const bscscanBaseUrl = isMainnet ? "https://api.bscscan.com/api" : "https://api-testnet.bscscan.com/api";
+      const chainId = isMainnet ? "56" : "97";
+      const apiBaseUrl = "https://api.etherscan.io/v2/api";
 
       console.log(`[ADMIN_WALLET] Fetching transactions for ${adminWalletAddress}`);
-      console.log(`[ADMIN_WALLET] Network: ${isMainnet ? "mainnet" : "testnet"}`);
-      console.log(`[ADMIN_WALLET] BSCScan URL: ${bscscanBaseUrl}`);
+      console.log(`[ADMIN_WALLET] Network: ${isMainnet ? "BSC Mainnet" : "BSC Testnet"} (chainId: ${chainId})`);
+      console.log(`[ADMIN_WALLET] Using Etherscan API V2: ${apiBaseUrl}`);
       console.log(
         `[ADMIN_WALLET] API Key present: ${bscscanApiKey ? "Yes (" + bscscanApiKey.slice(0, 4) + "...)" : "No"}`
       );
 
-      // Fetch normal transactions
-      const txUrl = `${bscscanBaseUrl}?module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`;
+      // Fetch normal transactions using V2 unified endpoint
+      const txUrl = `${apiBaseUrl}?chainid=${chainId}&module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`;
       console.log(`[ADMIN_WALLET] Request URL: ${txUrl.replace(bscscanApiKey, "API_KEY_HIDDEN")}`);
 
       const txResponse = await fetch(txUrl);
@@ -1346,8 +1349,10 @@ const gameController = {
           bscscanResult: txData.status === "0" ? txData.result : `${transactions.length} transactions`,
           hasApiKey: !!bscscanApiKey,
           apiKeyPreview: bscscanApiKey ? bscscanApiKey.slice(0, 6) + "..." : "NOT SET",
-          network: isMainnet ? "mainnet" : "testnet",
-          bscscanUrl: bscscanBaseUrl,
+          network: isMainnet ? "BSC Mainnet" : "BSC Testnet",
+          chainId: chainId,
+          apiVersion: "V2",
+          apiEndpoint: apiBaseUrl,
         },
       });
     } catch (error) {
