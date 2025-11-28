@@ -1449,6 +1449,175 @@ const gameController = {
       });
     }
   }),
+
+  // Get comprehensive game details for admin verification
+  getAdminGameDetails: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+    const { gameId } = req.params;
+
+    try {
+      // Get game from database
+      const game = await Game.findOne({ gameId: parseInt(gameId) });
+      if (!game) {
+        return res.status(404).json({ error: "Game not found" });
+      }
+
+      // Get all portfolios for this game
+      const portfolios = await Portfolio.find({ gameId: parseInt(gameId) })
+        .populate("userId", "username profileImage address")
+        .sort({ performancePercentage: -1 });
+
+      // Helper to convert wei to USDC
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        try {
+          return parseFloat(ethers.utils.formatUnits(String(weiValue), 18));
+        } catch {
+          return 0;
+        }
+      };
+
+      // Get blockchain data if game has started
+      let blockchainData = null;
+      try {
+        const gameDetails = await blockchainService.getGameDetails(parseInt(gameId));
+        blockchainData = {
+          totalPrizePool: weiToUSDC(gameDetails.totalPrizePool),
+          totalRewardDistributed: weiToUSDC(gameDetails.totalRewardDistributed),
+          entryCount: gameDetails.entryCount,
+          undistributed: weiToUSDC(gameDetails.totalPrizePool) - weiToUSDC(gameDetails.totalRewardDistributed),
+        };
+      } catch (error) {
+        blockchainData = { error: error.message };
+      }
+
+      // Calculate totals from database
+      const totalRewardsFromDB = portfolios.reduce((sum, p) => {
+        const reward = weiToUSDC(p.gameOutcome?.reward);
+        return sum + reward;
+      }, 0);
+
+      const winners = portfolios.filter((p) => p.gameOutcome?.isWinner === true);
+      const losers = portfolios.filter((p) => p.gameOutcome?.isWinner === false);
+      const pending = portfolios.filter((p) => !p.gameOutcome);
+
+      // Identify APE portfolio
+      const apePortfolio = portfolios.find((p) => p.isApe === true);
+
+      // Format portfolio data
+      const formattedPortfolios = portfolios.map((p, index) => {
+        const reward = weiToUSDC(p.gameOutcome?.reward);
+        return {
+          rank: p.gameOutcome?.rank || index + 1,
+          portfolioId: p.portfolioId,
+          portfolioName: p.portfolioName,
+          username: p.userId?.username || "Unknown",
+          userAddress: p.userId?.address || null,
+          isApe: p.isApe === true,
+          status: p.status,
+          gameType: p.gameType,
+          initialValue: p.initialValue,
+          currentValue: p.currentValue,
+          performancePercentage: p.performancePercentage,
+          isWinner: p.gameOutcome?.isWinner || false,
+          reward: reward,
+          rewardRaw: p.gameOutcome?.reward || "0",
+          isRewardDistributed: game.winners?.find((w) => w.portfolioId === p.portfolioId)?.isRewardDistributed || false,
+          assets: p.assets?.map((a) => ({
+            symbol: a.symbol,
+            type: a.type,
+            allocation: a.allocation,
+            initialPrice: a.initialPrice,
+            currentPrice: a.currentPrice,
+          })),
+          createdAt: p.createdAt,
+        };
+      });
+
+      // Check for data inconsistencies
+      const issues = [];
+
+      // Check if total rewards exceed prize pool
+      if (blockchainData?.totalPrizePool && totalRewardsFromDB > blockchainData.totalPrizePool + 0.01) {
+        issues.push({
+          type: "REWARD_EXCEEDS_POOL",
+          message: `Total rewards ($${totalRewardsFromDB.toFixed(
+            2
+          )}) exceed prize pool ($${blockchainData.totalPrizePool.toFixed(2)})`,
+          severity: "ERROR",
+        });
+      }
+
+      // Check if APE has non-zero reward
+      if (apePortfolio && weiToUSDC(apePortfolio.gameOutcome?.reward) > 0) {
+        issues.push({
+          type: "APE_HAS_REWARD",
+          message: `APE portfolio (Marlow) has reward of $${weiToUSDC(apePortfolio.gameOutcome?.reward).toFixed(
+            2
+          )} - should be $0`,
+          severity: "ERROR",
+          portfolioId: apePortfolio.portfolioId,
+        });
+      }
+
+      // Check if APE is winner when there are other winners
+      if (apePortfolio?.gameOutcome?.isWinner && winners.length > 1) {
+        issues.push({
+          type: "APE_WINNER_WITH_OTHERS",
+          message:
+            "APE is marked as winner but other players also won - Marlow should only win when NO players beat him",
+          severity: "ERROR",
+        });
+      }
+
+      // Check for missing reward distributions
+      const winnersNotDistributed = game.winners?.filter(
+        (w) => !w.isRewardDistributed && !portfolios.find((p) => p.portfolioId === w.portfolioId && p.isApe)
+      );
+      if (winnersNotDistributed?.length > 0) {
+        issues.push({
+          type: "UNDISTRIBUTED_REWARDS",
+          message: `${winnersNotDistributed.length} winner(s) have not received their rewards yet`,
+          severity: "WARNING",
+          portfolioIds: winnersNotDistributed.map((w) => w.portfolioId),
+        });
+      }
+
+      res.json({
+        game: {
+          gameId: game.gameId,
+          name: game.name,
+          status: game.status,
+          gameType: game.gameType,
+          startTime: game.startTime,
+          endTime: game.endTime,
+          winCondition: game.winCondition,
+          participantCount: game.participantCount,
+          totalPrizePoolDB: weiToUSDC(game.totalPrizePool),
+          apePortfolioId: game.apePortfolio?.portfolioId,
+          error: game.error,
+          createdAt: game.createdAt,
+          updatedAt: game.updatedAt,
+        },
+        blockchain: blockchainData,
+        summary: {
+          totalPortfolios: portfolios.length,
+          winnersCount: winners.length,
+          losersCount: losers.length,
+          pendingCount: pending.length,
+          totalRewardsShown: totalRewardsFromDB,
+          hasApePortfolio: !!apePortfolio,
+          apeIsWinner: apePortfolio?.gameOutcome?.isWinner || false,
+        },
+        portfolios: formattedPortfolios,
+        winners: formattedPortfolios.filter((p) => p.isWinner),
+        issues: issues,
+      });
+    } catch (error) {
+      console.error(`Error fetching admin game details for ${gameId}:`, error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
 };
 
 module.exports = gameController;

@@ -19,13 +19,9 @@ const portfolioController = {
     });
 
     // Get user's locked balance from blockchain
-    const lockedBalanceStr = await blockchainService.getUserLockedBalance(
-      req.user.address
-    );
+    const lockedBalanceStr = await blockchainService.getUserLockedBalance(req.user.address);
     const lockedBalance = ethers.BigNumber.from(lockedBalanceStr);
-    const allowedPortfoliosCount = lockedBalance
-      .div(ethers.utils.parseUnits("4.5", 18))
-      .toNumber();
+    const allowedPortfoliosCount = lockedBalance.div(ethers.utils.parseUnits("4.5", 18)).toNumber();
 
     res.json({
       pendingCount,
@@ -39,9 +35,7 @@ const portfolioController = {
     const userId = req.user._id;
 
     if (!gameId || isNaN(Number(gameId))) {
-      return res
-        .status(400)
-        .json({ error: "Invalid or missing gameId parameter" });
+      return res.status(400).json({ error: "Invalid or missing gameId parameter" });
     }
 
     const game = await Game.findOne({ gameId: Number(gameId) });
@@ -52,15 +46,7 @@ const portfolioController = {
     const allPortfolios = await Portfolio.find({
       gameId: Number(gameId),
       status: {
-        $in: [
-          "PENDING",
-          "LOCKING",
-          "AWAITING DECISION",
-          "LOCKED",
-          "COMPLETED",
-          "WON",
-          "LOST",
-        ],
+        $in: ["PENDING", "LOCKING", "AWAITING DECISION", "LOCKED", "COMPLETED", "WON", "LOST"],
       },
     })
       .populate("userId", "username profileImage")
@@ -72,10 +58,7 @@ const portfolioController = {
         gameId: Number(gameId),
         userId: userId,
         status: {
-          $nin: [
-            "PENDING_LOCK_BALANCE",
-            "FAILED",
-          ],
+          $nin: ["PENDING_LOCK_BALANCE", "FAILED"],
         },
       }).sort({ performancePercentage: -1 });
     }
@@ -84,10 +67,7 @@ const portfolioController = {
       userPortfolios.map(async (portfolio) => {
         const enrichedAssets = await Promise.all(
           portfolio.assets.map(async (asset) => {
-            const assetData = await Asset.findOne(
-              { assetId: asset.assetId },
-              "imageUrl"
-            );
+            const assetData = await Asset.findOne({ assetId: asset.assetId }, "imageUrl");
             return {
               ...asset.toJSON(),
               imageUrl: assetData ? assetData.imageUrl : "",
@@ -113,24 +93,31 @@ const portfolioController = {
     gameObj.totalPrizePool = weiToUSDC(gameObj.totalPrizePool);
 
     // Convert wei values in all portfolios
-    const convertedAllPortfolios = allPortfolios.map(p => {
+    // APE portfolios (Marlow) never show rewards - they're system opponents
+    const convertedAllPortfolios = allPortfolios.map((p) => {
       const portfolioObj = p.toObject ? p.toObject() : p;
+      const isApePortfolio = portfolioObj.isApe === true;
       return {
         ...portfolioObj,
-        gameOutcome: portfolioObj.gameOutcome ? {
-          ...portfolioObj.gameOutcome,
-          reward: weiToUSDC(portfolioObj.gameOutcome.reward),
-        } : undefined,
+        gameOutcome: portfolioObj.gameOutcome
+          ? {
+              ...portfolioObj.gameOutcome,
+              // APE portfolios always show $0 reward (prize stays in contract)
+              reward: isApePortfolio ? 0 : weiToUSDC(portfolioObj.gameOutcome.reward),
+            }
+          : undefined,
       };
     });
 
     // Convert wei values in user portfolios
-    const convertedUserPortfolios = enrichedPortfolios.map(p => ({
+    const convertedUserPortfolios = enrichedPortfolios.map((p) => ({
       ...p,
-      gameOutcome: p.gameOutcome ? {
-        ...p.gameOutcome,
-        reward: weiToUSDC(p.gameOutcome.reward),
-      } : undefined,
+      gameOutcome: p.gameOutcome
+        ? {
+            ...p.gameOutcome,
+            reward: weiToUSDC(p.gameOutcome.reward),
+          }
+        : undefined,
     }));
 
     res.json({
@@ -151,18 +138,12 @@ const portfolioController = {
     const { assets, gameType, portfolioName } = req.body;
 
     const formattedAssets = assets.map((asset) => asset.symbol);
-    if (
-      !formattedAssets ||
-      !Array.isArray(formattedAssets) ||
-      formattedAssets.length !== 8
-    ) {
+    if (!formattedAssets || !Array.isArray(formattedAssets) || formattedAssets.length !== 8) {
       return res.status(400).json({ error: "Must provide exactly 8 assets" });
     }
 
     if (!gameType || !["DEFI", "TRADFI"].includes(gameType)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid game type. Must be either DEFI or TRADFI" });
+      return res.status(400).json({ error: "Invalid game type. Must be either DEFI or TRADFI" });
     }
 
     // Check for unique assets
@@ -180,13 +161,9 @@ const portfolioController = {
 
     if (dbAssets.length !== formattedAssets.length) {
       const foundSymbols = dbAssets.map((a) => a.symbol);
-      const missingAssets = formattedAssets.filter(
-        (a) => !foundSymbols.includes(a)
-      );
+      const missingAssets = formattedAssets.filter((a) => !foundSymbols.includes(a));
       return res.status(400).json({
-        error: `Some assets were not found or are inactive: ${missingAssets.join(
-          ", "
-        )}`,
+        error: `Some assets were not found or are inactive: ${missingAssets.join(", ")}`,
       });
     }
 
@@ -207,8 +184,7 @@ const portfolioController = {
     // Validate user wallet
     if (!req.user.address) {
       return res.status(400).json({
-        error:
-          "User wallet address not found. Please connect your wallet first.",
+        error: "User wallet address not found. Please connect your wallet first.",
       });
     }
 
@@ -222,9 +198,7 @@ const portfolioController = {
       }
 
       // Get transaction receipt from blockchain
-      const receipt = await blockchainService.provider.getTransactionReceipt(
-        transactionHash
-      );
+      const receipt = await blockchainService.provider.getTransactionReceipt(transactionHash);
       if (!receipt) {
         return res.status(400).json({
           error: "Transaction not found on blockchain",
@@ -248,13 +222,9 @@ const portfolioController = {
       });
 
       // Get user's locked balance from blockchain
-      const lockedBalanceStr = await blockchainService.getUserLockedBalance(
-        req.user.address
-      );
+      const lockedBalanceStr = await blockchainService.getUserLockedBalance(req.user.address);
       const lockedBalance = ethers.BigNumber.from(lockedBalanceStr);
-      const allowedPortfoliosCount = lockedBalance
-        .div(ethers.utils.parseUnits("4.5", 18))
-        .toNumber();
+      const allowedPortfoliosCount = lockedBalance.div(ethers.utils.parseUnits("4.5", 18)).toNumber();
 
       // Get count of user's pending portfolios
       const pendingPortfoliosCount = await Portfolio.countDocuments({
@@ -277,9 +247,7 @@ const portfolioController = {
       }).save();
 
       // Get next portfolioId dynamically
-      const maxPortfolio = await Portfolio.findOne()
-        .sort({ portfolioId: -1 })
-        .select("portfolioId");
+      const maxPortfolio = await Portfolio.findOne().sort({ portfolioId: -1 }).select("portfolioId");
       const nextPortfolioId = maxPortfolio ? maxPortfolio.portfolioId + 1 : 1;
 
       // Create portfolio in database
@@ -323,10 +291,7 @@ const portfolioController = {
     const { gameType, status, sort = "createdAt" } = req.query;
 
     // Get portfolios with optional filters
-    const portfolios = await Portfolio.getUserPortfolios(
-      req.user._id,
-      gameType
-    ).populate({
+    const portfolios = await Portfolio.getUserPortfolios(req.user._id, gameType).populate({
       path: "gameId",
       select: "status startTime endTime totalPrizePool participantCount",
     });
@@ -349,10 +314,7 @@ const portfolioController = {
           // Get portfolio rank if active
           let rank = null;
           if (portfolio.status === "ACTIVE") {
-            rank = await Portfolio.getPortfolioRank(
-              portfolio._id,
-              portfolio.gameType
-            );
+            rank = await Portfolio.getPortfolioRank(portfolio._id, portfolio.gameType);
           }
 
           return {
@@ -361,27 +323,20 @@ const portfolioController = {
             blockchain: blockchainData,
           };
         } catch (error) {
-          console.error(
-            `Failed to fetch blockchain data for portfolio ${portfolio._id}:`,
-            error
-          );
+          console.error(`Failed to fetch blockchain data for portfolio ${portfolio._id}:`, error);
           return portfolio.toJSON();
         }
       })
     );
 
     // Get current prices for active portfolios
-    const activePortfolios = blockchainPortfolios.filter(
-      (p) => p.status === "ACTIVE"
-    );
+    const activePortfolios = blockchainPortfolios.filter((p) => p.status === "ACTIVE");
     if (activePortfolios.length > 0) {
       const prices = await priceService.getAllPrices();
 
       await Promise.all(
         activePortfolios.map(async (portfolio) => {
-          await Portfolio.findById(portfolio._id).then((p) =>
-            p.calculateValue(prices)
-          );
+          await Portfolio.findById(portfolio._id).then((p) => p.calculateValue(prices));
         })
       );
     }
@@ -419,10 +374,7 @@ const portfolioController = {
     // Enrich portfolio assets with current prices and images
     const enrichedAssets = await Promise.all(
       portfolio.assets.map(async (asset) => {
-        const assetData = await Asset.findOne(
-          { assetId: asset.assetId },
-          "currentPrice imageUrl"
-        );
+        const assetData = await Asset.findOne({ assetId: asset.assetId }, "currentPrice imageUrl");
         return {
           ...asset.toJSON(),
           currentPrice: assetData ? assetData.currentPrice : 0,
@@ -457,11 +409,7 @@ const portfolioController = {
 
     const historicalData = await Promise.all(
       portfolio.assets.map(async (asset) => {
-        const prices = await priceService.getHistoricalPrices(
-          asset.symbol,
-          asset.type,
-          parseInt(days)
-        );
+        const prices = await priceService.getHistoricalPrices(asset.symbol, asset.type, parseInt(days));
 
         return {
           symbol: asset.symbol,
@@ -497,18 +445,12 @@ const portfolioController = {
     }
 
     if (game.winCondition.type !== "MARLOW_BANES") {
-      const user = await User.findById(
-        userPortfolio.userId,
-        "username profileImage"
-      );
+      const user = await User.findById(userPortfolio.userId, "username profileImage");
 
       const enrichPortfolioAssets = async (portfolio) => {
         const enrichedAssets = await Promise.all(
           portfolio.assets.map(async (asset) => {
-            const assetData = await Asset.findOne(
-              { assetId: asset.assetId },
-              "currentPrice imageUrl"
-            );
+            const assetData = await Asset.findOne({ assetId: asset.assetId }, "currentPrice imageUrl");
             return {
               ...asset.toJSON(),
               currentPrice: assetData ? assetData.currentPrice : 0,
@@ -543,19 +485,13 @@ const portfolioController = {
     }
 
     // Get user profile
-    const user = await User.findById(
-      userPortfolio.userId,
-      "username profileImage"
-    );
+    const user = await User.findById(userPortfolio.userId, "username profileImage");
 
     // Function to enrich portfolio assets with current prices and images
     const enrichPortfolioAssets = async (portfolio) => {
       const enrichedAssets = await Promise.all(
         portfolio.assets.map(async (asset) => {
-          const assetData = await Asset.findOne(
-            { assetId: asset.assetId },
-            "currentPrice imageUrl"
-          );
+          const assetData = await Asset.findOne({ assetId: asset.assetId }, "currentPrice imageUrl");
           return {
             ...asset.toJSON(),
             currentPrice: assetData ? assetData.currentPrice : 0,
@@ -616,13 +552,8 @@ const portfolioController = {
     }
 
     try {
-      const receipt = await blockchainService.provider.getTransactionReceipt(
-        portfolio.transactionHash
-      );
-      console.log(
-        `Checking transaction status for ${portfolio.transactionHash}`,
-        receipt
-      );
+      const receipt = await blockchainService.provider.getTransactionReceipt(portfolio.transactionHash);
+      console.log(`Checking transaction status for ${portfolio.transactionHash}`, receipt);
       if (!receipt) {
         return res.json({
           status: "PENDING",
@@ -640,12 +571,8 @@ const portfolioController = {
         })
         .filter((event) => event !== null);
 
-      const portfolioCreatedEvent = decodedEvents.find(
-        (e) => e.name === "PortfolioCreated"
-      );
-      const portfolioEntryFeePaidEvent = decodedEvents.find(
-        (e) => e.name === "PortfolioEntryFeePaid"
-      );
+      const portfolioCreatedEvent = decodedEvents.find((e) => e.name === "PortfolioCreated");
+      const portfolioEntryFeePaidEvent = decodedEvents.find((e) => e.name === "PortfolioEntryFeePaid");
 
       if (!portfolioCreatedEvent) {
         return res.status(400).json({
@@ -656,11 +583,9 @@ const portfolioController = {
       if (receipt.status) {
         // Validate event data matches portfolio data
         if (
-          portfolioCreatedEvent.args.portfolioId.toNumber() !==
-            portfolio.portfolioId ||
+          portfolioCreatedEvent.args.portfolioId.toNumber() !== portfolio.portfolioId ||
           portfolioCreatedEvent.args.gameId.toNumber() !== portfolio.gameId ||
-          portfolio.userId.address.toLowerCase() !==
-            portfolioCreatedEvent.args.owner.toLowerCase()
+          portfolio.userId.address.toLowerCase() !== portfolioCreatedEvent.args.owner.toLowerCase()
         ) {
           return res.status(400).json({
             error: "PortfolioCreated event data does not match portfolio",
@@ -671,12 +596,8 @@ const portfolioController = {
           transactionHash: portfolio.transactionHash,
           userId: portfolio.userId,
           type: "ENTRY_FEE",
-          amount: portfolioEntryFeePaidEvent
-            ? portfolioEntryFeePaidEvent.args.entryFee.toString()
-            : "0",
-          adminFee: portfolioEntryFeePaidEvent
-            ? portfolioEntryFeePaidEvent.args.adminFee.toString()
-            : "0",
+          amount: portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.entryFee.toString() : "0",
+          adminFee: portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.adminFee.toString() : "0",
           gameId: portfolioCreatedEvent.args.gameId.toNumber(),
           portfolioId: portfolioEntryFeePaidEvent
             ? portfolioEntryFeePaidEvent.args.portfolioId.toNumber()
@@ -684,9 +605,7 @@ const portfolioController = {
           status: "COMPLETED",
           blockNumber: receipt.blockNumber,
           blockTimestamp: new Date(),
-          fromAddress: portfolioEntryFeePaidEvent
-            ? portfolioEntryFeePaidEvent.args.payer
-            : null,
+          fromAddress: portfolioEntryFeePaidEvent ? portfolioEntryFeePaidEvent.args.payer : null,
           toAddress: config.blockchain.contractAddress,
           gasUsed: receipt.gasUsed.toString(),
           gasPrice: receipt.effectiveGasPrice.toString(),
@@ -699,10 +618,7 @@ const portfolioController = {
           ? parseInt(portfolioCreatedEvent.args.entryCount.toString())
           : 0;
 
-        console.log(
-          "portfolioCreatedEvent.args:",
-          portfolioCreatedEvent.args.entryCount
-        );
+        console.log("portfolioCreatedEvent.args:", portfolioCreatedEvent.args.entryCount);
 
         const prizePool = portfolioCreatedEvent.args.prizePool
           ? parseInt(portfolioCreatedEvent.args.prizePool.toString())
@@ -710,10 +626,7 @@ const portfolioController = {
 
         const game = await Game.findOne({ gameId: gameId });
         if (game) {
-          game.participantCount = Math.max(
-            game.participantCount || 0,
-            gameEntryCount
-          );
+          game.participantCount = Math.max(game.participantCount || 0, gameEntryCount);
           game.totalPrizePool = Math.max(game.totalPrizePool || 0, prizePool);
           await game.save();
         }
@@ -765,11 +678,11 @@ const portfolioController = {
       });
     }
 
-      const portfolio = await Portfolio.findOne({
-        portfolioId: portfolioId,
-        userId: req.user._id,
-        status: { $in: ["PENDING_LOCK_BALANCE", "Failed"] },
-      });
+    const portfolio = await Portfolio.findOne({
+      portfolioId: portfolioId,
+      userId: req.user._id,
+      status: { $in: ["PENDING_LOCK_BALANCE", "Failed"] },
+    });
 
     if (!portfolio) {
       return res.status(404).json({
@@ -827,18 +740,12 @@ const portfolioController = {
     }
 
     const formattedAssets = assets.map((asset) => asset.symbol);
-    if (
-      !formattedAssets ||
-      !Array.isArray(formattedAssets) ||
-      formattedAssets.length !== 8
-    ) {
+    if (!formattedAssets || !Array.isArray(formattedAssets) || formattedAssets.length !== 8) {
       return res.status(400).json({ error: "Must provide exactly 8 assets" });
     }
 
     if (!gameType || !["DEFI", "TRADFI"].includes(gameType)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid game type. Must be either DEFI or TRADFI" });
+      return res.status(400).json({ error: "Invalid game type. Must be either DEFI or TRADFI" });
     }
 
     // Check for unique assets
@@ -856,13 +763,9 @@ const portfolioController = {
 
     if (dbAssets.length !== formattedAssets.length) {
       const foundSymbols = dbAssets.map((a) => a.symbol);
-      const missingAssets = formattedAssets.filter(
-        (a) => !foundSymbols.includes(a)
-      );
+      const missingAssets = formattedAssets.filter((a) => !foundSymbols.includes(a));
       return res.status(400).json({
-        error: `Some assets were not found or are inactive: ${missingAssets.join(
-          ", "
-        )}`,
+        error: `Some assets were not found or are inactive: ${missingAssets.join(", ")}`,
       });
     }
 
@@ -882,9 +785,7 @@ const portfolioController = {
 
     try {
       // Get next portfolioId dynamically
-      const maxPortfolio = await Portfolio.findOne()
-        .sort({ portfolioId: -1 })
-        .select("portfolioId");
+      const maxPortfolio = await Portfolio.findOne().sort({ portfolioId: -1 }).select("portfolioId");
       const nextPortfolioId = maxPortfolio ? maxPortfolio.portfolioId + 1 : 1;
 
       // Create portfolio in database
@@ -959,20 +860,14 @@ const portfolioController = {
 
       if (dbAssets.length !== formattedAssets.length) {
         const foundSymbols = dbAssets.map((a) => a.symbol);
-        const missingAssets = formattedAssets.filter(
-          (a) => !foundSymbols.includes(a)
-        );
+        const missingAssets = formattedAssets.filter((a) => !foundSymbols.includes(a));
         return res.status(400).json({
-          error: `Some assets were not found or are inactive: ${missingAssets.join(
-            ", "
-          )}`,
+          error: `Some assets were not found or are inactive: ${missingAssets.join(", ")}`,
         });
       }
 
       // Predefined allocation values
-      const allocations = [
-        20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000,
-      ];
+      const allocations = [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000];
 
       // Map assets to allocations
       portfolio.assets = formattedAssets.map((symbol, index) => {
@@ -992,10 +887,7 @@ const portfolioController = {
     // Enrich assets with imageUrl and currentPrice
     const enrichedAssets = await Promise.all(
       portfolio.assets.map(async (asset) => {
-        const assetData = await Asset.findOne(
-          { assetId: asset.assetId },
-          "currentPrice imageUrl"
-        );
+        const assetData = await Asset.findOne({ assetId: asset.assetId }, "currentPrice imageUrl");
         return {
           ...asset.toJSON(),
           currentPrice: assetData ? assetData.currentPrice : 0,
@@ -1038,10 +930,7 @@ const portfolioController = {
         // Get current prices for each asset
         const enrichedAssets = await Promise.all(
           portfolio.assets.map(async (asset) => {
-            const assetData = await Asset.findOne(
-              { assetId: asset.assetId },
-              "currentPrice imageUrl"
-            );
+            const assetData = await Asset.findOne({ assetId: asset.assetId }, "currentPrice imageUrl");
             return {
               ...asset.toJSON(),
               currentPrice: assetData ? assetData.currentPrice : 0,
@@ -1091,8 +980,7 @@ const portfolioController = {
           }
         : null,
       total: enrichedPortfolios.length,
-      activeCount: enrichedPortfolios.filter((p) => p.status === "ACTIVE")
-        .length,
+      activeCount: enrichedPortfolios.filter((p) => p.status === "ACTIVE").length,
     });
   }),
 };

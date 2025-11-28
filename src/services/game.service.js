@@ -461,65 +461,88 @@ class GameService {
         const reward = totalPrizePool / BigInt(winningPortfolios.length);
         console.log(`Reward per winner: $${(Number(reward) / 1e18).toFixed(2)}`);
 
-        // Process all winners the same way (Marlow is treated like any other user)
+        // Process all winners
+        const apeUserId = process.env.APE_USER_ID;
         for (let i = 0; i < winningPortfolios.length; i++) {
           const portfolio = winningPortfolios[i];
           const rank = i + 1;
           const userId = portfolio.userId?._id || portfolio.userId;
+          const isApePortfolio = userId?.toString() === apeUserId;
 
           // Add to game.winners
           game.winners.push({
             userId: userId,
             portfolioId: portfolio.portfolioId,
             performancePercentage: portfolio.performancePercentage,
-            isRewardDistributed: false,
+            isRewardDistributed: isApePortfolio, // APE is always "distributed" (no actual payout)
           });
 
-          await portfolio.markAsWinner(reward.toString(), rank);
+          // APE portfolios never receive rewards (prize stays in contract)
+          // Real players get their share of the prize pool
+          const portfolioReward = isApePortfolio ? "0" : reward.toString();
+          await portfolio.markAsWinner(portfolioReward, rank);
 
-          // Update user statistics (same for all users including Marlow)
-          const user = await User.findById(userId);
-          if (user) {
-            await user.updateGameStats(
-              game.gameId,
-              portfolio.portfolioId,
-              portfolio.performancePercentage,
-              parseFloat(reward.toString()),
-              rank
-            );
+          // Update user statistics (skip for APE - no real rewards)
+          if (!isApePortfolio) {
+            const user = await User.findById(userId);
+            if (user) {
+              await user.updateGameStats(
+                game.gameId,
+                portfolio.portfolioId,
+                portfolio.performancePercentage,
+                parseFloat(reward.toString()),
+                rank
+              );
+            }
+
+            // Create win notification (only for real users)
+            const previousWins = await Portfolio.countDocuments({
+              userId: userId,
+              "gameOutcome.isWinner": true,
+              portfolioId: { $ne: portfolio.portfolioId },
+            });
+
+            await new Notification({
+              userId: userId,
+              type: "PORTFOLIO_WON",
+              message: `Congratulations! Your portfolio "${portfolio.portfolioName}" won!`,
+              metadata: {
+                previousWins,
+                portfolioId: portfolio._id,
+                gameId: game.gameId,
+              },
+            }).save();
+          } else {
+            console.log(`🦍 APE (Marlow) wins - prize pool stays in contract (no actual reward)`);
           }
-
-          // Create win notification
-          const previousWins = await Portfolio.countDocuments({
-            userId: userId,
-            "gameOutcome.isWinner": true,
-            portfolioId: { $ne: portfolio.portfolioId },
-          });
-
-          await new Notification({
-            userId: userId,
-            type: "PORTFOLIO_WON",
-            message: `Congratulations! Your portfolio "${portfolio.portfolioName}" won!`,
-            metadata: {
-              previousWins,
-              portfolioId: portfolio._id,
-              gameId: game.gameId,
-            },
-          }).save();
         }
 
         // Mark losing portfolios (including Marlow if he lost)
         const losingPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue <= apeCurrentValue);
 
-        // If Marlow lost, mark his portfolio as LOST
+        // If Marlow lost (players beat him), mark his portfolio as LOST
+        // Marlow should NEVER be in winners unless no one beats him
         if (!marlowWins) {
+          // Calculate Marlow's rank among all participants (losers are ranked after winners)
+          const marlowRank =
+            lockedPortfolios.findIndex(
+              (p) => p.portfolioId === game.apePortfolio.portfolioId || p.currentValue <= apeCurrentValue
+            ) +
+            winningPortfolios.length +
+            1;
+
+          console.log(
+            `🦍 Marlow LOST - marked as loser at rank #${marlowRank} (${winningPortfolios.length} players beat him)`
+          );
+
           await Portfolio.updateOne(
             { portfolioId: game.apePortfolio.portfolioId },
             {
               $set: {
                 status: "LOST",
                 "gameOutcome.isWinner": false,
-                "gameOutcome.reward": "0",
+                "gameOutcome.reward": "0", // Marlow NEVER gets rewards when he loses
+                "gameOutcome.rank": marlowRank,
                 "gameOutcome.settledAt": new Date(),
               },
             }

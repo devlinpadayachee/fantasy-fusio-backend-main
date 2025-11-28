@@ -52,18 +52,14 @@ exports.getApeAssets = asyncHandler(async (req, res) => {
   const { type } = req.params;
 
   if (!["DEFI", "TRADFI"].includes(type.toUpperCase())) {
-    return res
-      .status(400)
-      .json({ error: "Invalid asset type. Must be DEFI or TRADFI" });
+    return res.status(400).json({ error: "Invalid asset type. Must be DEFI or TRADFI" });
   }
 
   const assets = await Asset.find({
     type: type.toUpperCase(),
     isActive: true,
   })
-    .select(
-      "assetId symbol name currentPrice change24h lastUpdated imageUrl ape"
-    )
+    .select("assetId symbol name currentPrice change24h lastUpdated imageUrl ape")
     .sort("assetId");
 
   res.json(assets);
@@ -111,9 +107,7 @@ exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
   }
 
   const ethers = require("ethers");
-  const games = await Game.find(query)
-    .populate("gameCronId", "customGameName creationTime")
-    .sort({ createdAt: -1 });
+  const games = await Game.find(query).populate("gameCronId", "customGameName creationTime").sort({ createdAt: -1 });
 
   // Helper function to convert wei to USDC dollars
   const weiToUSDC = (weiValue) => {
@@ -125,13 +119,16 @@ exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
   const formattedGames = games.map((game, index) => ({
     srNo: index + 1,
     _id: game._id,
+    gameId: game.gameId,
     gameTitle: `${game.name} #${game.gameId}`,
+    gameName: game.name,
     gameMode: game.gameType,
     prizePool: weiToUSDC(game.totalPrizePool), // Convert to dollars
     totalParticipants: game.participantCount,
     startTime: game.startTime,
     endTime: game.endTime,
     gameStatus: game.status,
+    winCondition: game.winCondition?.type,
     gameCronId: game.gameCronId,
     gameCronName: game.gameCronId?.customGameName || "N/A",
   }));
@@ -198,9 +195,7 @@ exports.getAllPortfolios = asyncHandler(async (req, res) => {
 
   const formattedPortfolios = portfolios.map((portfolio, index) => {
     const game = gameMap[portfolio.gameId];
-    const gameTitle = game
-      ? `${game.gameType} Game #${game.gameId}`
-      : `Game #${portfolio.gameId}`;
+    const gameTitle = game ? `${game.gameType} Game #${game.gameId}` : `Game #${portfolio.gameId}`;
 
     // Format assets as an array of objects with symbol, allocation, and imageUrl
     const assetsArray = portfolio.assets.map((asset) => ({
@@ -259,8 +254,7 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/transactions
 // @access  Admin
 exports.getAllTransactions = asyncHandler(async (req, res) => {
-  const { transactionHash, type, portfolioId, fromAddress, toAddress, status } =
-    req.query;
+  const { transactionHash, type, portfolioId, fromAddress, toAddress, status } = req.query;
 
   // Build transaction query
   let transactionQuery = {};
