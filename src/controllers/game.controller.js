@@ -1232,20 +1232,39 @@ const gameController = {
       const bscscanBaseUrl =
         process.env.NODE_ENV === "production" ? "https://api.bscscan.com/api" : "https://api-testnet.bscscan.com/api";
 
-      // Fetch normal transactions
-      const txResponse = await fetch(
-        `${bscscanBaseUrl}?module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`
+      console.log(`[ADMIN_WALLET] Fetching transactions for ${adminWalletAddress}`);
+      console.log(`[ADMIN_WALLET] BSCScan URL: ${bscscanBaseUrl}`);
+      console.log(
+        `[ADMIN_WALLET] API Key present: ${bscscanApiKey ? "Yes (" + bscscanApiKey.slice(0, 4) + "...)" : "No"}`
       );
+
+      // Fetch normal transactions
+      const txUrl = `${bscscanBaseUrl}?module=account&action=txlist&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=100&sort=desc&apikey=${bscscanApiKey}`;
+      const txResponse = await fetch(txUrl);
       const txData = await txResponse.json();
 
-      // Fetch internal transactions (contract interactions)
-      const internalTxResponse = await fetch(
-        `${bscscanBaseUrl}?module=account&action=txlistinternal&address=${adminWalletAddress}&startblock=0&endblock=99999999&page=1&offset=50&sort=desc&apikey=${bscscanApiKey}`
-      );
-      const internalTxData = await internalTxResponse.json();
+      console.log(`[ADMIN_WALLET] BSCScan response status: ${txData.status}, message: ${txData.message}`);
+      if (txData.result) {
+        console.log(
+          `[ADMIN_WALLET] Results: ${
+            Array.isArray(txData.result) ? txData.result.length + " transactions" : txData.result
+          }`
+        );
+      }
 
       // Process transactions into accounting format
       const transactions = [];
+      let apiWarning = null;
+
+      // Check for API errors
+      if (txData.status === "0") {
+        if (txData.message === "No transactions found") {
+          console.log(`[ADMIN_WALLET] No transactions found for this address`);
+        } else {
+          apiWarning = txData.message || txData.result || "BSCScan API returned an error";
+          console.error(`[ADMIN_WALLET] BSCScan API warning: ${apiWarning}`);
+        }
+      }
 
       if (txData.status === "1" && Array.isArray(txData.result)) {
         for (const tx of txData.result) {
@@ -1304,6 +1323,11 @@ const gameController = {
         },
         transactions: transactions.slice(0, 100), // Limit to 100 most recent
         transactionCount: transactions.length,
+        apiWarning: apiWarning,
+        debug: {
+          bscscanResponse: txData.status === "0" ? txData : null,
+          hasApiKey: !!bscscanApiKey,
+        },
       });
     } catch (error) {
       console.error("Error fetching admin wallet info:", error);
