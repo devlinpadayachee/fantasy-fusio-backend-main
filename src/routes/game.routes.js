@@ -20,6 +20,7 @@ router.post("/fix-stuck-games", gameController.fixStuckGames);
 router.get("/admin-wallet", gameController.getAdminWalletInfo);
 router.get("/marlow-earnings", gameController.getMarlowEarnings);
 router.post("/withdraw-marlow-earnings/:gameId", gameController.withdrawMarlowEarnings);
+router.get("/admin-game-details/:gameId", gameController.getAdminGameDetails);
 
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);
