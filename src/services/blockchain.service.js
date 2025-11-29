@@ -481,43 +481,74 @@ class BlockchainService {
   }
   async batchAssignRewards(gameId, portfolioIds, amounts) {
     try {
-      const currentNonce = await this.contract.nonce();
+      console.log(`[BLOCKCHAIN] batchAssignRewards called for game ${gameId}`);
+      console.log(`[BLOCKCHAIN]   Portfolios: ${portfolioIds.length}, Amounts: ${amounts.length}`);
 
-      const domain = {
-        name: "FusioFantasyGameV2",
-        version: "1",
-        chainId: (await this.provider.getNetwork()).chainId,
-        verifyingContract: this.contract.address,
-      };
+      if (portfolioIds.length === 0) {
+        console.log(`[BLOCKCHAIN] No portfolios to process, skipping`);
+        return { transactionHash: null, skipped: true };
+      }
 
-      const types = {
-        BatchAssignRewards: [
-          { name: "portfolioIds", type: "uint256[]" },
-          { name: "amounts", type: "uint256[]" },
-          { name: "nonce", type: "uint256" },
-        ],
-      };
+      if (portfolioIds.length !== amounts.length) {
+        throw new Error(`Portfolio/amount mismatch: ${portfolioIds.length} portfolios, ${amounts.length} amounts`);
+      }
 
-      const value = {
-        portfolioIds,
-        amounts,
-        nonce: currentNonce.toNumber(),
-      };
+      // CRITICAL: Signature must be generated INSIDE the queue callback
+      // to ensure the contract nonce is fresh when the transaction executes.
+      // The queue processes transactions sequentially, so by the time this
+      // callback runs, the contract nonce will be correct for THIS transaction.
+      const receipt = await transactionQueue.addTransaction(async (walletNonce) => {
+        // Get fresh contract nonce right before signing
+        const contractNonce = await this.contract.nonce();
+        console.log(`[BLOCKCHAIN] Contract nonce: ${contractNonce}, Wallet nonce: ${walletNonce}`);
 
-      // Generate signature using _signTypedData
-      const signature = await this.adminWallet._signTypedData(domain, types, value);
+        const chainId = (await this.provider.getNetwork()).chainId;
 
-      const receipt = await transactionQueue.addTransaction(async (nonce) => {
+        const domain = {
+          name: "FusioFantasyGameV2",
+          version: "1",
+          chainId: chainId,
+          verifyingContract: this.contract.address,
+        };
+
+        const types = {
+          BatchAssignRewards: [
+            { name: "portfolioIds", type: "uint256[]" },
+            { name: "amounts", type: "uint256[]" },
+            { name: "nonce", type: "uint256" },
+          ],
+        };
+
+        const value = {
+          portfolioIds,
+          amounts,
+          nonce: contractNonce.toNumber(),
+        };
+
+        // Generate signature with fresh nonce
+        const signature = await this.adminWallet._signTypedData(domain, types, value);
+
+        // Dynamic gas limit based on batch size (more portfolios = more gas)
+        const baseGas = 100000;
+        const perPortfolioGas = 50000;
+        const estimatedGas = baseGas + portfolioIds.length * perPortfolioGas;
+        const gasLimit = Math.min(estimatedGas, 3000000); // Cap at 3M
+
+        console.log(`[BLOCKCHAIN] Sending batchAssignRewards tx (gas: ${gasLimit})`);
+
         return await this.contract.batchAssignRewards(portfolioIds, amounts, signature, {
-          gasLimit: 1500000,
-          nonce,
+          gasLimit,
+          nonce: walletNonce,
         });
-      }, `BatchAssignRewards for game ${gameId}`);
+      }, `BatchAssignRewards for game ${gameId} (${portfolioIds.length} winners)`);
+
+      console.log(`[BLOCKCHAIN] ✅ batchAssignRewards success: ${receipt.transactionHash}`);
 
       return {
         transactionHash: receipt.transactionHash,
       };
     } catch (error) {
+      console.error(`[BLOCKCHAIN] ❌ batchAssignRewards failed for game ${gameId}:`, error.message);
       throw new Error(`Failed to batch assign rewards: ${error.message}`);
     }
   }

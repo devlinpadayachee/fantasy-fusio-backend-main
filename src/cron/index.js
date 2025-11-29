@@ -22,6 +22,13 @@ const logCronExecution = (jobName) => {
   console.log(`[${new Date().toISOString()}] Executing cron job: ${jobName}`);
 };
 
+// Mutex locks to prevent overlapping cron runs
+// This is critical for blockchain operations that must be sequential
+const cronLocks = {
+  rewardDistribution: false,
+  winnerCalculation: false,
+};
+
 // Initialize all cron jobs
 exports.initializeCronJobs = () => {
   try {
@@ -142,16 +149,28 @@ exports.initializeCronJobs = () => {
     });
 
     // Distribute rewards in batches every minute
+    // IMPORTANT: Process ONE game at a time to prevent contract nonce collisions
+    // Uses mutex lock to prevent overlapping runs
     validateCronExpression("* * * * *");
     cron.schedule("* * * * *", async () => {
+      // Skip if previous run is still in progress
+      if (cronLocks.rewardDistribution) {
+        console.log("[CRON] Reward distribution already in progress, skipping this run");
+        return;
+      }
+
+      cronLocks.rewardDistribution = true;
+
       try {
         logCronExecution("Reward Distribution");
-        const activeGames = await Game.find({
+        // Process only 1 game at a time to ensure sequential blockchain transactions
+        const game = await Game.findOne({
           status: "CALCULATING_WINNERS",
           hasCalculatedWinners: true,
           isFullyDistributed: false,
-        }).limit(2);
-        for (const game of activeGames) {
+        }).sort({ endTime: 1 }); // Process oldest first
+
+        if (game) {
           try {
             logCronExecution(`Distributing rewards for game ${game.gameId}`);
             await gameService.distributeGameRewards(game);
@@ -161,6 +180,8 @@ exports.initializeCronJobs = () => {
         }
       } catch (error) {
         console.error("Reward distribution cron job error:", error);
+      } finally {
+        cronLocks.rewardDistribution = false;
       }
     });
 

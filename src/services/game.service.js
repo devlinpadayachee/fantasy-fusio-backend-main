@@ -959,39 +959,59 @@ class GameService {
   }
 
   // Distribute rewards in batches (all winners treated the same)
-  async distributeGameRewards(game, batchSize = 50, retryCount = 0, maxRetries = 20) {
+  // IMPORTANT: This function is called by cron for ONE game at a time to prevent
+  // blockchain transaction nonce collisions
+  async distributeGameRewards(game, batchSize = 50, retryCount = 0, maxRetries = 5) {
+    const gameId = game.gameId;
+
     try {
+      // Refresh game data to get latest state
+      await game.populate('winners');
       const undistributedWinners = game.winners.filter((w) => !w.isRewardDistributed);
 
+      console.log(`[REWARDS] Game ${gameId}: ${undistributedWinners.length} undistributed winners remaining`);
+
       if (undistributedWinners.length === 0) {
+        console.log(`[REWARDS] Game ${gameId}: All rewards distributed, marking complete`);
         await game.markFullyDistributed();
         game.status = "COMPLETED";
         await game.save();
         return;
       }
 
-      // Process in batches
+      // Process in batches - smaller batches are safer for blockchain
       const batch = undistributedWinners.slice(0, batchSize);
       const portfolioIds = [];
       const amounts = [];
       const apeWinners = []; // Track APE winners separately (database-only, no blockchain)
 
+      console.log(`[REWARDS] Game ${gameId}: Processing batch of ${batch.length} winners`);
+
       for (const winner of batch) {
         const portfolio = await Portfolio.findOne({ portfolioId: winner.portfolioId });
         if (!portfolio) {
-          console.warn(`Portfolio not found: ${winner.portfolioId}`);
+          console.warn(`[REWARDS] Portfolio not found: ${winner.portfolioId}, marking as distributed`);
+          // Mark as distributed to prevent infinite loop
+          await game.markWinnerRewardDistributed(winner._id, "PORTFOLIO_NOT_FOUND");
           continue;
         }
 
         // APE portfolios are database-only, skip blockchain distribution
         if (portfolio.isApe) {
-          console.log(`🦍 Skipping blockchain distribution for APE portfolio ${portfolio.portfolioId}`);
+          console.log(`[REWARDS] 🦍 APE portfolio ${portfolio.portfolioId} - skipping blockchain`);
           apeWinners.push({ winner, portfolio });
           continue;
         }
 
+        const reward = portfolio.gameOutcome?.reward?.toString() || "0";
+        if (reward === "0") {
+          console.warn(`[REWARDS] Portfolio ${portfolio.portfolioId} has zero reward, skipping`);
+          await game.markWinnerRewardDistributed(winner._id, "ZERO_REWARD");
+          continue;
+        }
+
         portfolioIds.push(winner.portfolioId);
-        amounts.push(portfolio.gameOutcome.reward?.toString() || "0");
+        amounts.push(reward);
       }
 
       // Mark APE winners as distributed (they don't actually receive blockchain rewards)
@@ -1005,56 +1025,79 @@ class GameService {
           }
         );
         await game.markWinnerRewardDistributed(winner._id, "APE_SYSTEM_WIN");
-        console.log(`🦍 APE portfolio ${portfolio.portfolioId} marked as distributed (no actual blockchain transfer)`);
+        console.log(`[REWARDS] 🦍 APE portfolio ${portfolio.portfolioId} marked as distributed`);
       }
 
       if (portfolioIds.length === 0) {
+        console.log(`[REWARDS] Game ${gameId}: No real user portfolios in this batch`);
         // All winners were APE or invalid - check if we need to continue
-        if (undistributedWinners.length > batchSize) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          return this.distributeGameRewards(game, batchSize, retryCount, maxRetries);
+        if (undistributedWinners.length > batch.length) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return this.distributeGameRewards(game, batchSize, 0, maxRetries);
         }
-        console.log("No real user portfolios found for blockchain distribution.");
+        console.log(`[REWARDS] Game ${gameId}: All done, marking complete`);
         await game.markFullyDistributed();
         game.status = "COMPLETED";
         await game.save();
         return;
       }
 
+      console.log(`[REWARDS] Game ${gameId}: Sending ${portfolioIds.length} rewards to blockchain`);
+
       // Call blockchain batchAssignRewards (only for real user portfolios)
       const result = await blockchainService.batchAssignRewards(game.gameId, portfolioIds, amounts);
 
-      // Update portfolios and game winners as distributed
-      for (const portfolioId of portfolioIds) {
-        await Portfolio.findOneAndUpdate(
-          { portfolioId },
-          {
-            $set: {
-              "gameOutcome.rewardTransactionHash": result.transactionHash,
-            },
-          }
-        );
-      }
+      if (result.skipped) {
+        console.log(`[REWARDS] Game ${gameId}: Blockchain call skipped (empty batch)`);
+      } else {
+        console.log(`[REWARDS] Game ${gameId}: Blockchain tx: ${result.transactionHash}`);
 
-      for (const winner of batch) {
-        await game.markWinnerRewardDistributed(winner._id, result.transactionHash);
+        // Update portfolios and game winners as distributed
+        for (const portfolioId of portfolioIds) {
+          await Portfolio.findOneAndUpdate(
+            { portfolioId },
+            {
+              $set: {
+                "gameOutcome.rewardTransactionHash": result.transactionHash,
+              },
+            }
+          );
+        }
+
+        for (const winner of batch.filter(w => portfolioIds.includes(w.portfolioId))) {
+          await game.markWinnerRewardDistributed(winner._id, result.transactionHash);
+        }
       }
 
       // If more winners remain, recursively process next batch
-      if (undistributedWinners.length > batchSize) {
-        // Wait 1 second before next batch
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        return this.distributeGameRewards(game, batchSize, retryCount, maxRetries);
+      const remainingCount = undistributedWinners.length - batch.length;
+      if (remainingCount > 0) {
+        console.log(`[REWARDS] Game ${gameId}: ${remainingCount} winners remaining, processing next batch in 2s`);
+        // Wait 2 seconds before next batch to avoid overwhelming the blockchain
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        return this.distributeGameRewards(game, batchSize, 0, maxRetries);
       }
 
       // All rewards distributed, mark game as COMPLETED
+      console.log(`[REWARDS] ✅ Game ${gameId}: All rewards distributed successfully`);
+      await game.markFullyDistributed();
       game.status = "COMPLETED";
       await game.save();
 
-      console.log(`Distributed rewards for game ${game.gameId} in batches. Processed ${portfolioIds.length} rewards.`);
     } catch (error) {
-      console.error("Error distributing game rewards:", error);
-      throw error;
+      console.error(`[REWARDS] ❌ Game ${gameId}: Error distributing rewards:`, error.message);
+
+      // Retry logic for transient errors
+      if (retryCount < maxRetries) {
+        const waitTime = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+        console.log(`[REWARDS] Game ${gameId}: Retrying in ${waitTime/1000}s (attempt ${retryCount + 1}/${maxRetries})`);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        return this.distributeGameRewards(game, batchSize, retryCount + 1, maxRetries);
+      }
+
+      console.error(`[REWARDS] Game ${gameId}: Max retries exceeded, giving up for now`);
+      // Don't throw - let the cron try again on next run
+      // The game stays in CALCULATING_WINNERS state so cron will pick it up again
     }
   }
 
