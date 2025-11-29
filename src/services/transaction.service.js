@@ -211,9 +211,9 @@ class TransactionService {
         throw new Error("Transaction not found");
       }
 
-      // Get additional blockchain details if needed
-      const receipt = await blockchainService.web3.eth.getTransactionReceipt(transactionHash);
-      const tx = await blockchainService.web3.eth.getTransaction(transactionHash);
+      // Get additional blockchain details if needed (using ethers.js provider)
+      const receipt = await blockchainService.provider.getTransactionReceipt(transactionHash);
+      const tx = await blockchainService.provider.getTransaction(transactionHash);
 
       return {
         ...transaction.toObject(),

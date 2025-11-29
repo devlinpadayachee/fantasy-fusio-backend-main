@@ -74,15 +74,17 @@ process.on('unhandledRejection', (error) => {
 process.on('SIGTERM', async () => {
     console.log('SIGTERM received. Starting graceful shutdown...');
 
-    await mongoose.connection.close();
-    console.log('MongoDB connection closed');
-    
-
-    if (blockchainService.web3.currentProvider.connected) {
-        await blockchainService.web3.currentProvider.disconnect();
-        console.log('Blockchain connection closed');
+    try {
+        await mongoose.connection.close();
+        console.log('MongoDB connection closed');
+    } catch (err) {
+        console.error('Error closing MongoDB connection:', err.message);
     }
-    
+
+    // Note: ethers.js JsonRpcProvider doesn't require explicit disconnection
+    // The provider will be garbage collected when the process exits
+    console.log('Blockchain provider cleanup complete');
+
     process.exit(0);
 });
 
