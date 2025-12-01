@@ -136,11 +136,16 @@ exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
   res.json(formattedGames);
 });
 
-// @desc    Get all portfolios for admin with filtering
+// @desc    Get all portfolios for admin with filtering and pagination
 // @route   GET /api/admin/portfolios
 // @access  Admin
 exports.getAllPortfolios = asyncHandler(async (req, res) => {
-  const { username, walletAddress, type, status } = req.query;
+  const { username, walletAddress, type, status, search, page = 1, limit = 20 } = req.query;
+
+  // Parse pagination params
+  const pageNum = Math.max(1, parseInt(page) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+  const skip = (pageNum - 1) * limitNum;
 
   // Build portfolio query
   let portfolioQuery = {};
@@ -151,66 +156,65 @@ exports.getAllPortfolios = asyncHandler(async (req, res) => {
     portfolioQuery.status = status;
   }
 
-  // Build user query for filtering
-  let userQuery = {};
-  if (username) {
-    userQuery.username = { $regex: username, $options: "i" };
-  }
-  if (walletAddress) {
-    userQuery.address = { $regex: walletAddress, $options: "i" };
-  }
-
-  // First get users that match the criteria if user filters are applied
+  // Handle search (searches wallet address, username, or portfolio name)
+  const searchTerm = search || walletAddress || username;
   let userIds = null;
-  if (username || walletAddress) {
+
+  if (searchTerm) {
     const User = require("../models/User");
-    const matchingUsers = await User.find(userQuery).select("_id");
+    // Search users by username or wallet address
+    const matchingUsers = await User.find({
+      $or: [
+        { username: { $regex: searchTerm, $options: "i" } },
+        { address: { $regex: searchTerm, $options: "i" } },
+      ],
+    }).select("_id");
     userIds = matchingUsers.map((user) => user._id);
 
-    // If no users match the criteria, return empty result
-    if (userIds.length === 0) {
-      return res.json([]);
+    // Build OR query for portfolio name or matching user IDs
+    portfolioQuery.$or = [{ portfolioName: { $regex: searchTerm, $options: "i" } }];
+    if (userIds.length > 0) {
+      portfolioQuery.$or.push({ userId: { $in: userIds } });
     }
-
-    portfolioQuery.userId = { $in: userIds };
   }
 
+  // Get total count for pagination (efficient with countDocuments)
+  const totalCount = await Portfolio.countDocuments(portfolioQuery);
+
+  // Fetch paginated portfolios
   const portfolios = await Portfolio.find(portfolioQuery)
     .populate("userId", "username address")
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limitNum)
+    .lean(); // Use lean() for better performance
 
-  // Get all games to create a lookup map
-  const games = await Game.find({});
-  const gameMap = {};
-  games.forEach((game) => {
-    gameMap[game.gameId] = game;
-  });
+  // Get unique gameIds from this page's portfolios for efficient lookup
+  const gameIds = [...new Set(portfolios.map((p) => p.gameId))];
+  const games = await Game.find({ gameId: { $in: gameIds } }).lean();
+  const gameMap = Object.fromEntries(games.map((g) => [g.gameId, g]));
 
-  // Create a map of asset symbol to asset details for quick lookup
-  const allAssets = await Asset.find({});
-  const assetMap = {};
-  allAssets.forEach((asset) => {
-    assetMap[asset.symbol] = asset;
-  });
+  // Get unique asset symbols for efficient lookup
+  const assetSymbols = [...new Set(portfolios.flatMap((p) => p.assets.map((a) => a.symbol)))];
+  const assets = await Asset.find({ symbol: { $in: assetSymbols } }).lean();
+  const assetMap = Object.fromEntries(assets.map((a) => [a.symbol, a]));
 
+  // Format portfolios
   const formattedPortfolios = portfolios.map((portfolio, index) => {
     const game = gameMap[portfolio.gameId];
     const gameTitle = game ? `${game.gameType} Game #${game.gameId}` : `Game #${portfolio.gameId}`;
 
-    // Format assets as an array of objects with symbol, allocation, and imageUrl
-    const assetsArray = portfolio.assets.map((asset) => ({
-      symbol: asset.symbol,
-      allocation: asset.allocation,
-      imageUrl: assetMap[asset.symbol]?.imageUrl || null,
-    }));
-
     return {
-      srNo: index + 1,
-      username: portfolio.portfolioName?.username || "N/A",
+      srNo: skip + index + 1,
+      username: portfolio.userId?.username || "N/A",
       portfolioName: portfolio.portfolioName || "N/A",
       walletAddress: portfolio.userId?.address || "N/A",
       type: portfolio.gameType,
-      assets: assetsArray,
+      assets: portfolio.assets.map((asset) => ({
+        symbol: asset.symbol,
+        allocation: asset.allocation,
+        imageUrl: assetMap[asset.symbol]?.imageUrl || null,
+      })),
       currentValue: portfolio.currentValue,
       status: portfolio.status,
       createdAt: portfolio.createdAt,
@@ -219,7 +223,16 @@ exports.getAllPortfolios = asyncHandler(async (req, res) => {
     };
   });
 
-  res.json(formattedPortfolios);
+  res.json({
+    portfolios: formattedPortfolios,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      hasMore: pageNum * limitNum < totalCount,
+    },
+  });
 });
 
 // @desc    Get all users for admin
