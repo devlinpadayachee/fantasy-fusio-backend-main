@@ -1398,7 +1398,11 @@ const gameController = {
             winStatus = "PLAYERS_WON";
           }
 
-          if (availableToWithdraw > 0.001) {
+          // Check if already withdrawn from DB
+          const isWithdrawn = game.adminWithdrawal?.isWithdrawn === true;
+
+          // Only count as unclaimed if not already withdrawn
+          if (availableToWithdraw > 0.001 && !isWithdrawn) {
             totalUnclaimed += availableToWithdraw;
           }
 
@@ -1409,11 +1413,21 @@ const gameController = {
             participantCount: game.participantCount,
             totalPrizePool: totalPrizePool,
             totalDistributed: totalDistributed,
-            availableToWithdraw: availableToWithdraw,
+            availableToWithdraw: isWithdrawn ? 0 : availableToWithdraw,
             winStatus: winStatus,
             winnersCount: game.winners.length,
-            canWithdraw: availableToWithdraw > 0.001,
+            canWithdraw: availableToWithdraw > 0.001 && !isWithdrawn,
             apePortfolioId: game.apePortfolio?.portfolioId,
+            // Withdrawal status
+            withdrawal: isWithdrawn
+              ? {
+                  isWithdrawn: true,
+                  amount: parseFloat(ethers.utils.formatUnits(game.adminWithdrawal.amount || "0", 18)),
+                  transactionHash: game.adminWithdrawal.transactionHash,
+                  withdrawnAt: game.adminWithdrawal.withdrawnAt,
+                  withdrawnBy: game.adminWithdrawal.withdrawnBy,
+                }
+              : null,
           });
         } catch (error) {
           console.error(`Error processing game ${game.gameId}:`, error.message);
@@ -1481,6 +1495,16 @@ const gameController = {
         return res.status(404).json({ error: "Game not found or not a MARLOW_BANES game" });
       }
 
+      // Check if already withdrawn
+      if (game.adminWithdrawal?.isWithdrawn) {
+        return res.status(400).json({
+          error: "Already withdrawn",
+          details: `This game's prize pool was already withdrawn on ${game.adminWithdrawal.withdrawnAt?.toISOString()}`,
+          transactionHash: game.adminWithdrawal.transactionHash,
+          amountWithdrawn: parseFloat(ethers.utils.formatUnits(game.adminWithdrawal.amount || "0", 18)),
+        });
+      }
+
       // Get current prize pool info from blockchain
       let gameDetails;
       try {
@@ -1525,6 +1549,18 @@ const gameController = {
       );
 
       const receipt = await blockchainService.withdrawFromPrizePool(parseInt(gameId), availableToWithdraw.toString());
+
+      // Mark the game as withdrawn in the database
+      game.adminWithdrawal = {
+        isWithdrawn: true,
+        amount: availableToWithdraw.toString(),
+        transactionHash: receipt.transactionHash,
+        withdrawnAt: new Date(),
+        withdrawnBy: receipt.withdrawalWallet || "unknown",
+      };
+      await game.save();
+
+      console.log(`[MARLOW] Game ${gameId} marked as withdrawn in database`);
 
       res.json({
         success: true,

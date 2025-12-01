@@ -115,6 +115,20 @@ const gameSchema = new mongoose.Schema(
         distributionTransactionHash: String,
       },
     ],
+    // Track admin withdrawal of undistributed prize pool (for MARLOW_BANES games)
+    adminWithdrawal: {
+      isWithdrawn: {
+        type: Boolean,
+        default: false,
+      },
+      amount: {
+        type: String, // Wei amount
+        default: "0",
+      },
+      transactionHash: String,
+      withdrawnAt: Date,
+      withdrawnBy: String, // Wallet address that performed the withdrawal
+    },
     createdAt: {
       type: Date,
       default: Date.now,
