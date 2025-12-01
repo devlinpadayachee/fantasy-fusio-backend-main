@@ -1668,6 +1668,604 @@ const gameController = {
       res.status(500).json({ error: error.message });
     }
   }),
+
+  // ============================================================
+  // MARLOW REWARD MANAGEMENT ENDPOINTS
+  // ============================================================
+
+  /**
+   * Get Marlow Health Check - Identify all Marlow reward issues across games
+   * GET /api/game/admin/marlow-health
+   */
+  getMarlowHealthCheck: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+
+    try {
+      const apeUserId = process.env.APE_USER_ID;
+      if (!apeUserId) {
+        return res.status(400).json({ error: "APE_USER_ID not configured in environment" });
+      }
+
+      // Find all MARLOW_BANES games
+      const marlowGames = await Game.find({
+        "winCondition.type": "MARLOW_BANES",
+        status: { $in: ["COMPLETED", "DISTRIBUTING_REWARDS", "CALCULATING_WINNERS"] },
+      }).sort({ gameId: 1 });
+
+      const issues = [];
+      const stats = {
+        gamesAnalyzed: 0,
+        marlowWonGames: 0,
+        marlowLostGames: 0,
+        gamesWithIssues: 0,
+      };
+
+      for (const game of marlowGames) {
+        stats.gamesAnalyzed++;
+        const gameIssues = [];
+
+        // Check if game has APE portfolio
+        if (!game.apePortfolio?.portfolioId) {
+          gameIssues.push({
+            type: "NO_APE_PORTFOLIO",
+            message: "Game has no APE portfolio configured",
+          });
+          continue;
+        }
+
+        // Get the APE portfolio
+        const apePortfolio = await Portfolio.findOne({
+          portfolioId: game.apePortfolio.portfolioId,
+        });
+
+        if (!apePortfolio) {
+          gameIssues.push({
+            type: "APE_PORTFOLIO_NOT_FOUND",
+            message: `APE portfolio ${game.apePortfolio.portfolioId} not found in database`,
+          });
+          continue;
+        }
+
+        const apeCurrentValue = apePortfolio.currentValue;
+
+        // Get all player portfolios
+        const playerPortfolios = await Portfolio.find({
+          gameId: game.gameId,
+          isApe: { $ne: true },
+          status: { $in: ["WON", "LOST", "LOCKED", "AWAITING DECISION"] },
+        });
+
+        // Determine actual winners
+        const actualWinners = playerPortfolios.filter((p) => p.currentValue > apeCurrentValue);
+        const marlowWon = actualWinners.length === 0;
+
+        if (marlowWon) {
+          stats.marlowWonGames++;
+        } else {
+          stats.marlowLostGames++;
+        }
+
+        // Check Issue 1: Marlow's portfolio reward should be "0"
+        const marlowReward = apePortfolio.gameOutcome?.reward;
+        if (marlowReward && marlowReward !== "0") {
+          gameIssues.push({
+            type: "MARLOW_HAS_REWARD",
+            message: `Marlow's portfolio has reward "${marlowReward}" but should be "0"`,
+            currentReward: marlowReward,
+            expectedReward: "0",
+            portfolioId: apePortfolio.portfolioId,
+          });
+        }
+
+        // Check Issue 2: Marlow's status
+        if (marlowWon && (apePortfolio.status !== "WON" || !apePortfolio.gameOutcome?.isWinner)) {
+          gameIssues.push({
+            type: "MARLOW_WRONG_STATUS_WON",
+            message: `Marlow WON but status is "${apePortfolio.status}" (should be "WON")`,
+            currentStatus: apePortfolio.status,
+            expectedStatus: "WON",
+            portfolioId: apePortfolio.portfolioId,
+          });
+        } else if (!marlowWon && (apePortfolio.status !== "LOST" || apePortfolio.gameOutcome?.isWinner)) {
+          gameIssues.push({
+            type: "MARLOW_WRONG_STATUS_LOST",
+            message: `Marlow LOST but status is "${apePortfolio.status}" (should be "LOST")`,
+            currentStatus: apePortfolio.status,
+            expectedStatus: "LOST",
+            playersWhoBeatMarlow: actualWinners.length,
+            portfolioId: apePortfolio.portfolioId,
+          });
+        }
+
+        // Check Issue 3: Game winners array
+        const marlowInWinners = game.winners.some((w) => w.portfolioId === apePortfolio.portfolioId);
+
+        if (marlowWon && !marlowInWinners) {
+          gameIssues.push({
+            type: "MARLOW_MISSING_FROM_WINNERS",
+            message: "Marlow WON but is not in game.winners array",
+          });
+        } else if (!marlowWon && marlowInWinners) {
+          gameIssues.push({
+            type: "MARLOW_INCORRECTLY_IN_WINNERS",
+            message: `Marlow LOST (${actualWinners.length} players beat him) but is still in game.winners`,
+          });
+        } else if (marlowWon && marlowInWinners) {
+          const marlowWinner = game.winners.find((w) => w.portfolioId === apePortfolio.portfolioId);
+          if (marlowWinner?.reward && marlowWinner.reward !== "0") {
+            gameIssues.push({
+              type: "MARLOW_WINNER_HAS_REWARD",
+              message: `Marlow in winners has reward "${marlowWinner.reward}" (should be "0")`,
+              currentReward: marlowWinner.reward,
+            });
+          }
+        }
+
+        if (gameIssues.length > 0) {
+          stats.gamesWithIssues++;
+          issues.push({
+            gameId: game.gameId,
+            gameName: game.name,
+            gameStatus: game.status,
+            marlowResult: marlowWon ? "WON" : "LOST",
+            playersWhoBeatMarlow: actualWinners.length,
+            totalPlayers: playerPortfolios.length,
+            issues: gameIssues,
+          });
+        }
+      }
+
+      res.json({
+        summary: stats,
+        issues: issues,
+        healthy: issues.length === 0,
+        message: issues.length === 0
+          ? "✅ All Marlow games are healthy"
+          : `⚠️ Found ${issues.length} games with issues`,
+      });
+    } catch (error) {
+      console.error("Error in Marlow health check:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Fix Marlow Rewards - Fix all identified Marlow issues
+   * POST /api/game/admin/fix-marlow-rewards
+   */
+  fixMarlowRewards: asyncHandler(async (req, res) => {
+    try {
+      const apeUserId = process.env.APE_USER_ID;
+      if (!apeUserId) {
+        return res.status(400).json({ error: "APE_USER_ID not configured in environment" });
+      }
+
+      const stats = {
+        gamesProcessed: 0,
+        portfolioRewardsFixed: 0,
+        gameWinnersFixed: 0,
+        marlowStatusFixed: 0,
+        errors: [],
+      };
+
+      // Find all MARLOW_BANES games
+      const marlowGames = await Game.find({
+        "winCondition.type": "MARLOW_BANES",
+        status: { $in: ["COMPLETED", "DISTRIBUTING_REWARDS", "CALCULATING_WINNERS"] },
+      }).sort({ gameId: 1 });
+
+      for (const game of marlowGames) {
+        stats.gamesProcessed++;
+
+        try {
+          if (!game.apePortfolio?.portfolioId) continue;
+
+          const apePortfolio = await Portfolio.findOne({
+            portfolioId: game.apePortfolio.portfolioId,
+          });
+          if (!apePortfolio) continue;
+
+          const apeCurrentValue = apePortfolio.currentValue;
+
+          const playerPortfolios = await Portfolio.find({
+            gameId: game.gameId,
+            isApe: { $ne: true },
+            status: { $in: ["WON", "LOST", "LOCKED", "AWAITING DECISION"] },
+          });
+
+          const actualWinners = playerPortfolios.filter((p) => p.currentValue > apeCurrentValue);
+          const marlowWon = actualWinners.length === 0;
+
+          // FIX 1: Marlow's portfolio reward
+          if (apePortfolio.gameOutcome?.reward && apePortfolio.gameOutcome.reward !== "0") {
+            await Portfolio.updateOne(
+              { portfolioId: apePortfolio.portfolioId },
+              { $set: { "gameOutcome.reward": "0" } }
+            );
+            stats.portfolioRewardsFixed++;
+          }
+
+          // FIX 2: Marlow's portfolio status
+          if (marlowWon) {
+            if (apePortfolio.status !== "WON" || !apePortfolio.gameOutcome?.isWinner) {
+              await Portfolio.updateOne(
+                { portfolioId: apePortfolio.portfolioId },
+                {
+                  $set: {
+                    status: "WON",
+                    "gameOutcome.isWinner": true,
+                    "gameOutcome.reward": "0",
+                    "gameOutcome.rank": 1,
+                    "gameOutcome.settledAt": new Date(),
+                  },
+                }
+              );
+              stats.marlowStatusFixed++;
+            }
+          } else {
+            if (apePortfolio.status !== "LOST" || apePortfolio.gameOutcome?.isWinner) {
+              await Portfolio.updateOne(
+                { portfolioId: apePortfolio.portfolioId },
+                {
+                  $set: {
+                    status: "LOST",
+                    "gameOutcome.isWinner": false,
+                    "gameOutcome.reward": "0",
+                    "gameOutcome.rank": actualWinners.length + 1,
+                    "gameOutcome.settledAt": new Date(),
+                  },
+                }
+              );
+              stats.marlowStatusFixed++;
+            }
+          }
+
+          // FIX 3: Game winners array
+          const marlowInWinners = game.winners.some((w) => w.portfolioId === apePortfolio.portfolioId);
+
+          if (marlowWon && !marlowInWinners) {
+            game.winners.push({
+              userId: apePortfolio.userId,
+              portfolioId: apePortfolio.portfolioId,
+              performancePercentage: apePortfolio.performancePercentage,
+              reward: "0",
+              isRewardDistributed: true,
+              distributionTransactionHash: "APE_SYSTEM_WIN",
+            });
+            await game.save();
+            stats.gameWinnersFixed++;
+          } else if (!marlowWon && marlowInWinners) {
+            game.winners = game.winners.filter((w) => w.portfolioId !== apePortfolio.portfolioId);
+            await game.save();
+            stats.gameWinnersFixed++;
+          } else if (marlowWon && marlowInWinners) {
+            const marlowWinner = game.winners.find((w) => w.portfolioId === apePortfolio.portfolioId);
+            if (marlowWinner?.reward && marlowWinner.reward !== "0") {
+              marlowWinner.reward = "0";
+              await game.save();
+              stats.gameWinnersFixed++;
+            }
+          }
+        } catch (error) {
+          stats.errors.push({
+            gameId: game.gameId,
+            error: error.message,
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: "Marlow rewards fix completed",
+        stats: stats,
+      });
+    } catch (error) {
+      console.error("Error fixing Marlow rewards:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Get Game Reward Status - Show distributed vs outstanding rewards for a game
+   * GET /api/game/admin/reward-status/:gameId
+   */
+  getGameRewardStatus: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+    const { gameId } = req.params;
+
+    try {
+      const game = await Game.findOne({ gameId: parseInt(gameId) });
+      if (!game) {
+        return res.status(404).json({ error: "Game not found" });
+      }
+
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        try {
+          return parseFloat(ethers.utils.formatUnits(String(weiValue), 18));
+        } catch {
+          return 0;
+        }
+      };
+
+      // Get blockchain data
+      let blockchainData = null;
+      try {
+        const gameDetails = await blockchainService.getGameDetails(parseInt(gameId));
+        blockchainData = {
+          totalPrizePool: weiToUSDC(gameDetails.totalPrizePool),
+          totalPrizePoolWei: gameDetails.totalPrizePool,
+          totalRewardDistributed: weiToUSDC(gameDetails.totalRewardDistributed),
+          totalRewardDistributedWei: gameDetails.totalRewardDistributed,
+          undistributed: weiToUSDC(gameDetails.totalPrizePool) - weiToUSDC(gameDetails.totalRewardDistributed),
+          entryCount: gameDetails.entryCount,
+        };
+      } catch (error) {
+        blockchainData = { error: error.message };
+      }
+
+      // Get all winner portfolios
+      const winnerPortfolios = await Portfolio.find({
+        gameId: parseInt(gameId),
+        "gameOutcome.isWinner": true,
+      }).populate("userId", "username address");
+
+      // Map winners with distribution status
+      const winners = game.winners.map((w) => {
+        const portfolio = winnerPortfolios.find((p) => p.portfolioId === w.portfolioId);
+        return {
+          portfolioId: w.portfolioId,
+          portfolioName: portfolio?.portfolioName || "Unknown",
+          username: portfolio?.userId?.username || "Unknown",
+          userAddress: portfolio?.userId?.address || null,
+          isApe: portfolio?.isApe || false,
+          reward: weiToUSDC(w.reward || portfolio?.gameOutcome?.reward),
+          rewardWei: w.reward || portfolio?.gameOutcome?.reward || "0",
+          isDistributed: w.isRewardDistributed,
+          transactionHash: w.distributionTransactionHash || null,
+          performancePercentage: w.performancePercentage,
+        };
+      });
+
+      const distributed = winners.filter((w) => w.isDistributed);
+      const outstanding = winners.filter((w) => !w.isDistributed);
+      const apeWinners = winners.filter((w) => w.isApe);
+      const playerWinners = winners.filter((w) => !w.isApe);
+
+      // Calculate totals
+      const totalDistributedAmount = distributed.reduce((sum, w) => sum + w.reward, 0);
+      const totalOutstandingAmount = outstanding.reduce((sum, w) => sum + w.reward, 0);
+
+      res.json({
+        game: {
+          gameId: game.gameId,
+          name: game.name,
+          status: game.status,
+          gameType: game.gameType,
+          winCondition: game.winCondition?.type,
+          hasCalculatedWinners: game.hasCalculatedWinners,
+          isFullyDistributed: game.isFullyDistributed,
+          endTime: game.endTime,
+        },
+        blockchain: blockchainData,
+        summary: {
+          totalWinners: winners.length,
+          distributedCount: distributed.length,
+          outstandingCount: outstanding.length,
+          apeWinnersCount: apeWinners.length,
+          playerWinnersCount: playerWinners.length,
+          totalDistributedAmount: totalDistributedAmount,
+          totalOutstandingAmount: totalOutstandingAmount,
+        },
+        winners: {
+          all: winners,
+          distributed: distributed,
+          outstanding: outstanding,
+        },
+        canProcessRemaining: outstanding.length > 0 && game.hasCalculatedWinners,
+      });
+    } catch (error) {
+      console.error(`Error getting reward status for game ${gameId}:`, error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Process Remaining Rewards - Manually trigger reward distribution for a game
+   * POST /api/game/admin/process-rewards/:gameId
+   */
+  processRemainingRewards: asyncHandler(async (req, res) => {
+    const { gameId } = req.params;
+
+    try {
+      const game = await Game.findOne({ gameId: parseInt(gameId) });
+      if (!game) {
+        return res.status(404).json({ error: "Game not found" });
+      }
+
+      if (!game.hasCalculatedWinners) {
+        return res.status(400).json({
+          error: "Winners have not been calculated for this game",
+          suggestion: "Wait for winner calculation to complete or manually trigger it",
+        });
+      }
+
+      const undistributedWinners = game.winners.filter((w) => !w.isRewardDistributed);
+
+      if (undistributedWinners.length === 0) {
+        // Mark game as complete if not already
+        if (!game.isFullyDistributed || game.status !== "COMPLETED") {
+          game.isFullyDistributed = true;
+          game.status = "COMPLETED";
+          await game.save();
+        }
+
+        return res.json({
+          success: true,
+          message: "All rewards already distributed",
+          gameId: parseInt(gameId),
+          processed: 0,
+          gameStatus: "COMPLETED",
+        });
+      }
+
+      // Check if all undistributed are APE (no blockchain needed)
+      const portfolioIds = undistributedWinners.map((w) => w.portfolioId);
+      const portfolios = await Portfolio.find({
+        portfolioId: { $in: portfolioIds },
+      });
+
+      const allApe = portfolios.every((p) => p.isApe === true);
+
+      if (allApe) {
+        // Mark APE winners as distributed without blockchain
+        for (const winner of undistributedWinners) {
+          const portfolio = portfolios.find((p) => p.portfolioId === winner.portfolioId);
+          if (portfolio) {
+            await Portfolio.findOneAndUpdate(
+              { portfolioId: portfolio.portfolioId },
+              { $set: { "gameOutcome.rewardTransactionHash": "APE_SYSTEM_WIN_MANUAL" } }
+            );
+            winner.isRewardDistributed = true;
+            winner.distributionTransactionHash = "APE_SYSTEM_WIN_MANUAL";
+          }
+        }
+
+        game.isFullyDistributed = true;
+        game.status = "COMPLETED";
+        await game.save();
+
+        return res.json({
+          success: true,
+          message: "All winners are APE - marked as distributed without blockchain",
+          gameId: parseInt(gameId),
+          processed: undistributedWinners.length,
+          blockchainCall: false,
+          gameStatus: "COMPLETED",
+        });
+      }
+
+      // Process real user rewards via blockchain
+      console.log(`[ADMIN] Manually triggering reward distribution for game ${gameId}`);
+
+      try {
+        await gameService.distributeGameRewards(game);
+
+        // Refresh game data
+        const updatedGame = await Game.findOne({ gameId: parseInt(gameId) });
+
+        res.json({
+          success: true,
+          message: "Reward distribution triggered successfully",
+          gameId: parseInt(gameId),
+          processed: undistributedWinners.length,
+          blockchainCall: true,
+          gameStatus: updatedGame.status,
+          isFullyDistributed: updatedGame.isFullyDistributed,
+        });
+      } catch (distError) {
+        console.error(`[ADMIN] Reward distribution failed for game ${gameId}:`, distError);
+
+        let details = "Check server logs for details";
+        if (distError.message.includes("INSUFFICIENT_FUNDS")) {
+          details = "⚠️ Admin wallet needs more BNB for gas fees";
+        } else if (distError.message.includes("nonce")) {
+          details = "Transaction nonce issue - try again in a few minutes";
+        }
+
+        res.status(500).json({
+          error: "Reward distribution failed",
+          message: distError.message,
+          details: details,
+          gameId: parseInt(gameId),
+        });
+      }
+    } catch (error) {
+      console.error(`Error processing rewards for game ${gameId}:`, error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Get All Games Reward Summary - Overview of all games and their reward status
+   * GET /api/game/admin/all-rewards-summary
+   */
+  getAllGamesRewardSummary: asyncHandler(async (req, res) => {
+    const ethers = require("ethers");
+    const { status, limit = 50, page = 1 } = req.query;
+
+    try {
+      const weiToUSDC = (weiValue) => {
+        if (!weiValue) return 0;
+        try {
+          return parseFloat(ethers.utils.formatUnits(String(weiValue), 18));
+        } catch {
+          return 0;
+        }
+      };
+
+      // Build query
+      const query = {};
+      if (status) {
+        query.status = status;
+      } else {
+        query.status = { $in: ["CALCULATING_WINNERS", "DISTRIBUTING_REWARDS", "COMPLETED"] };
+      }
+
+      const games = await Game.find(query)
+        .sort({ endTime: -1 })
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(parseInt(limit));
+
+      const total = await Game.countDocuments(query);
+
+      const gameSummaries = games.map((game) => {
+        const totalWinners = game.winners?.length || 0;
+        const distributedWinners = game.winners?.filter((w) => w.isRewardDistributed).length || 0;
+        const outstandingWinners = totalWinners - distributedWinners;
+
+        return {
+          gameId: game.gameId,
+          name: game.name,
+          status: game.status,
+          gameType: game.gameType,
+          winCondition: game.winCondition?.type,
+          endTime: game.endTime,
+          totalPrizePool: weiToUSDC(game.totalPrizePool),
+          participantCount: game.participantCount,
+          hasCalculatedWinners: game.hasCalculatedWinners,
+          isFullyDistributed: game.isFullyDistributed,
+          totalWinners: totalWinners,
+          distributedWinners: distributedWinners,
+          outstandingWinners: outstandingWinners,
+          needsAttention: outstandingWinners > 0 && game.hasCalculatedWinners,
+        };
+      });
+
+      // Calculate overall stats
+      const needsAttention = gameSummaries.filter((g) => g.needsAttention);
+      const totalOutstanding = gameSummaries.reduce((sum, g) => sum + g.outstandingWinners, 0);
+
+      res.json({
+        summary: {
+          totalGames: total,
+          gamesNeedingAttention: needsAttention.length,
+          totalOutstandingRewards: totalOutstanding,
+        },
+        games: gameSummaries,
+        gamesNeedingAttention: needsAttention,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: total,
+          pages: Math.ceil(total / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      console.error("Error getting all games reward summary:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
 };
 
 module.exports = gameController;

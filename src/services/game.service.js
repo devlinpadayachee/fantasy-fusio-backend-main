@@ -403,13 +403,13 @@ class GameService {
       if (game.winCondition.type === "MARLOW_BANES") {
         console.log(`\n--- MARLOW_BANES: Beat the Ape ---`);
 
-        // Get totalPrizePool from blockchain
+        // Get prize pool from blockchain
         const gameDetails = await blockchainService.getGameDetails(game.gameId);
         const totalPrizePool = BigInt(gameDetails.totalPrizePool);
         game.totalPrizePool = totalPrizePool.toString();
         console.log(`Prize Pool: $${(Number(totalPrizePool) / 1e18).toFixed(2)}`);
 
-        // Fetch ape portfolio with userId populated
+        // Fetch ape portfolio
         const apePortfolio = await Portfolio.findOne({
           portfolioId: game.apePortfolio.portfolioId,
         }).populate("userId");
@@ -418,138 +418,36 @@ class GameService {
           game.status = "FAILED";
           game.error = `Ape portfolio not found for game ${game.gameId}`;
           await game.save();
-          console.error(`Ape portfolio not found for game ${game.gameId}`);
           return;
         }
 
-        const apeCurrentValue = apePortfolio.currentValue;
-        console.log(
-          `Ape Portfolio: $${apeCurrentValue.toLocaleString()} (${apePortfolio.performancePercentage.toFixed(2)}%)`
-        );
+        const apeValue = apePortfolio.currentValue;
+        console.log(`Ape Portfolio: $${apeValue.toLocaleString()} (${apePortfolio.performancePercentage.toFixed(2)}%)`);
 
-        const lockedPortfolios = await Portfolio.find({
+        // Get all player portfolios sorted by performance
+        const playerPortfolios = await Portfolio.find({
           gameId: game.gameId,
           status: "LOCKED",
           portfolioId: { $ne: game.apePortfolio.portfolioId },
         })
           .populate("userId")
-          .sort({ performancePercentage: -1, createdAt: 1 }); // Tie-breaker: earlier entry wins
+          .sort({ performancePercentage: -1, createdAt: 1 });
 
-        let winningPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue > apeCurrentValue);
+        // Split into winners (beat ape) and losers
+        const winners = playerPortfolios.filter((p) => p.currentValue > apeValue);
+        const losers = playerPortfolios.filter((p) => p.currentValue <= apeValue);
+        const marlowWins = winners.length === 0;
 
-        // Log top 10 standings
+        // Log standings
         console.log("\n📊 Top 10 Standings:");
-        lockedPortfolios.slice(0, 10).forEach((p, i) => {
-          const isWinner = p.currentValue > apeCurrentValue ? "✅" : "❌";
-          console.log(
-            `${i + 1}. ${isWinner} Portfolio ${
-              p.portfolioId
-            }: $${p.currentValue.toLocaleString()} (${p.performancePercentage.toFixed(2)}%)`
-          );
+        playerPortfolios.slice(0, 10).forEach((p, i) => {
+          const icon = p.currentValue > apeValue ? "✅" : "❌";
+          console.log(`${i + 1}. ${icon} Portfolio ${p.portfolioId}: $${p.currentValue.toLocaleString()}`);
         });
 
-        // Determine if Marlow wins (no users beat him)
-        const marlowWins = winningPortfolios.length === 0;
-
-        if (marlowWins) {
-          winningPortfolios = [apePortfolio];
-          console.log(`\n🎯 Result: No portfolios beat the ape! Ape wins.`);
-        } else {
-          console.log(`\n🎯 Result: ${winningPortfolios.length} portfolios beat the ape!`);
-        }
-
-        const reward = totalPrizePool / BigInt(winningPortfolios.length);
-        console.log(`Reward per winner: $${(Number(reward) / 1e18).toFixed(2)}`);
-
-        // Process all winners
-        const apeUserId = process.env.APE_USER_ID;
-        for (let i = 0; i < winningPortfolios.length; i++) {
-          const portfolio = winningPortfolios[i];
-          const rank = i + 1;
+        // Helper: Process a loser portfolio
+        const processLoser = async (portfolio, rank) => {
           const userId = portfolio.userId?._id || portfolio.userId;
-          const isApePortfolio = userId?.toString() === apeUserId;
-
-          // Add to game.winners
-          game.winners.push({
-            userId: userId,
-            portfolioId: portfolio.portfolioId,
-            performancePercentage: portfolio.performancePercentage,
-            isRewardDistributed: isApePortfolio, // APE is always "distributed" (no actual payout)
-          });
-
-          // APE portfolios never receive rewards (prize stays in contract)
-          // Real players get their share of the prize pool
-          const portfolioReward = isApePortfolio ? "0" : reward.toString();
-          await portfolio.markAsWinner(portfolioReward, rank);
-
-          // Update user statistics (skip for APE - no real rewards)
-          if (!isApePortfolio) {
-            const user = await User.findById(userId);
-            if (user) {
-              await user.updateGameStats(
-                game.gameId,
-                portfolio.portfolioId,
-                portfolio.performancePercentage,
-                parseFloat(reward.toString()),
-                rank
-              );
-            }
-
-            // Create win notification (only for real users)
-            const previousWins = await Portfolio.countDocuments({
-              userId: userId,
-              "gameOutcome.isWinner": true,
-              portfolioId: { $ne: portfolio.portfolioId },
-            });
-
-            await new Notification({
-              userId: userId,
-              type: "PORTFOLIO_WON",
-              message: `Congratulations! Your portfolio "${portfolio.portfolioName}" won!`,
-              metadata: {
-                previousWins,
-                portfolioId: portfolio._id,
-                gameId: game.gameId,
-              },
-            }).save();
-          } else {
-            console.log(`🦍 APE (Marlow) wins - prize pool stays in contract (no actual reward)`);
-          }
-        }
-
-        // Mark losing portfolios (including Marlow if he lost)
-        const losingPortfolios = lockedPortfolios.filter((portfolio) => portfolio.currentValue <= apeCurrentValue);
-
-        // If Marlow lost (players beat him), mark his portfolio as LOST
-        // Marlow should NEVER be in winners unless no one beats him
-        if (!marlowWins) {
-          // Calculate Marlow's rank among all participants (losers are ranked after winners)
-          const marlowRank =
-            lockedPortfolios.findIndex(
-              (p) => p.portfolioId === game.apePortfolio.portfolioId || p.currentValue <= apeCurrentValue
-            ) +
-            winningPortfolios.length +
-            1;
-
-          console.log(
-            `🦍 Marlow LOST - marked as loser at rank #${marlowRank} (${winningPortfolios.length} players beat him)`
-          );
-
-          await Portfolio.updateOne(
-            { portfolioId: game.apePortfolio.portfolioId },
-            {
-              $set: {
-                status: "LOST",
-                "gameOutcome.isWinner": false,
-                "gameOutcome.reward": "0", // Marlow NEVER gets rewards when he loses
-                "gameOutcome.rank": marlowRank,
-                "gameOutcome.settledAt": new Date(),
-              },
-            }
-          );
-        }
-
-        for (const portfolio of losingPortfolios) {
           await Portfolio.updateOne(
             { portfolioId: portfolio.portfolioId },
             {
@@ -557,50 +455,119 @@ class GameService {
                 status: "LOST",
                 "gameOutcome.isWinner": false,
                 "gameOutcome.reward": "0",
+                "gameOutcome.rank": rank,
                 "gameOutcome.settledAt": new Date(),
-                "gameOutcome.rank": winningPortfolios.length + 1,
               },
             }
           );
+          const user = await User.findById(userId);
+          if (user)
+            await user.updateGameStats(game.gameId, portfolio.portfolioId, portfolio.performancePercentage, 0, rank);
+          await new Notification({
+            userId,
+            type: "PORTFOLIO_LOST",
+            message: `Your portfolio "${portfolio.portfolioName}" did not beat Marlow Banes this round.`,
+            metadata: { portfolioId: portfolio._id, gameId: game.gameId },
+          }).save();
+        };
 
-          // Update user statistics for loser
-          const user = await User.findById(portfolio.userId._id);
-          if (user) {
-            await user.updateGameStats(
-              game.gameId,
-              portfolio.portfolioId,
-              portfolio.performancePercentage,
-              0,
-              winningPortfolios.length + 1
-            );
-          }
+        if (marlowWins) {
+          // ============================================================
+          // MARLOW WINS - Prize stays in contract
+          // ============================================================
+          console.log(`\n🎯 Marlow wins! Prize pool stays in contract.`);
 
-          const previousWins = await Portfolio.countDocuments({
-            userId: portfolio.userId._id,
-            "gameOutcome.isWinner": true,
-            gameId: { $ne: game.gameId },
+          // Mark Marlow as winner
+          await Portfolio.updateOne(
+            { portfolioId: apePortfolio.portfolioId },
+            {
+              $set: {
+                status: "WON",
+                "gameOutcome.isWinner": true,
+                "gameOutcome.reward": "0",
+                "gameOutcome.rank": 1,
+                "gameOutcome.settledAt": new Date(),
+              },
+            }
+          );
+          game.winners.push({
+            userId: apePortfolio.userId?._id || apePortfolio.userId,
+            portfolioId: apePortfolio.portfolioId,
+            performancePercentage: apePortfolio.performancePercentage,
+            reward: "0",
+            isRewardDistributed: true,
+            distributionTransactionHash: "APE_SYSTEM_WIN",
           });
 
-          await new Notification({
-            userId: portfolio.userId._id,
-            type: "PORTFOLIO_LOST",
-            message: `Your portfolio "${portfolio.portfolioName}" did not win this round.`,
-            metadata: {
-              previousWins,
-              portfolioId: portfolio._id,
-              gameId: game.gameId,
-            },
-          }).save();
-        }
+          // Mark all players as losers
+          await Promise.all(playerPortfolios.map((p) => processLoser(p, 2)));
 
-        console.log(`\n✅ MARLOW_BANES Complete:`);
-        console.log(`   Winners: ${winningPortfolios.length}`);
-        console.log(`   Losers: ${losingPortfolios.length}`);
-        console.log(`========== WINNER CALCULATION END: Game ${game.gameId} ==========\n`);
+          console.log(`✅ Complete: Marlow wins, ${playerPortfolios.length} players lost`);
+        } else {
+          // ============================================================
+          // PLAYERS WIN - Distribute rewards
+          // ============================================================
+          const rewardPerWinner = totalPrizePool / BigInt(winners.length);
+          console.log(
+            `\n🎯 ${winners.length} players beat the ape! Reward: $${(Number(rewardPerWinner) / 1e18).toFixed(2)} each`
+          );
+
+          // Process winners
+          for (let i = 0; i < winners.length; i++) {
+            const portfolio = winners[i];
+            const userId = portfolio.userId?._id || portfolio.userId;
+            const rank = i + 1;
+
+            game.winners.push({
+              userId,
+              portfolioId: portfolio.portfolioId,
+              performancePercentage: portfolio.performancePercentage,
+              isRewardDistributed: false,
+            });
+            await portfolio.markAsWinner(rewardPerWinner.toString(), rank);
+
+            const user = await User.findById(userId);
+            if (user)
+              await user.updateGameStats(
+                game.gameId,
+                portfolio.portfolioId,
+                portfolio.performancePercentage,
+                parseFloat(rewardPerWinner.toString()),
+                rank
+              );
+
+            await new Notification({
+              userId,
+              type: "PORTFOLIO_WON",
+              message: `Congratulations! Your portfolio "${portfolio.portfolioName}" beat Marlow Banes!`,
+              metadata: { portfolioId: portfolio._id, gameId: game.gameId },
+            }).save();
+          }
+
+          // Mark Marlow as loser
+          const marlowRank = winners.length + 1;
+          await Portfolio.updateOne(
+            { portfolioId: apePortfolio.portfolioId },
+            {
+              $set: {
+                status: "LOST",
+                "gameOutcome.isWinner": false,
+                "gameOutcome.reward": "0",
+                "gameOutcome.rank": marlowRank,
+                "gameOutcome.settledAt": new Date(),
+              },
+            }
+          );
+          console.log(`🦍 Marlow LOST - ranked #${marlowRank}`);
+
+          // Mark losing players
+          await Promise.all(losers.map((p) => processLoser(p, marlowRank)));
+
+          console.log(`✅ Complete: ${winners.length} winners, ${losers.length} losers`);
+        }
 
         game.hasCalculatedWinners = true;
         await game.markWinnerCalculated();
-
         return;
       }
 
@@ -966,7 +933,7 @@ class GameService {
 
     try {
       // Refresh game data to get latest state
-      await game.populate('winners');
+      await game.populate("winners");
       const undistributedWinners = game.winners.filter((w) => !w.isRewardDistributed);
 
       console.log(`[REWARDS] Game ${gameId}: ${undistributedWinners.length} undistributed winners remaining`);
@@ -978,6 +945,52 @@ class GameService {
         await game.save();
         return;
       }
+
+      // ====== OPTIMIZATION: Check if only APE winners exist ======
+      // If all winners are APE portfolios (Marlow won), skip blockchain entirely
+      // This saves gas fees since APE never receives actual blockchain rewards
+      const winnerPortfolioIds = undistributedWinners.map((w) => w.portfolioId);
+      const winnerPortfolios = await Portfolio.find({
+        portfolioId: { $in: winnerPortfolioIds },
+      }).select("portfolioId isApe");
+
+      const allWinnersAreApe = winnerPortfolios.every((p) => p.isApe === true);
+      const hasOnlyApeWinners = winnerPortfolios.length > 0 && allWinnersAreApe;
+
+      if (hasOnlyApeWinners) {
+        console.log(
+          `[REWARDS] 🦍 Game ${gameId}: Only APE winner(s) detected - SKIPPING blockchain distribution to save gas!`
+        );
+
+        // Mark all APE winners as distributed without any blockchain calls
+        for (const winner of undistributedWinners) {
+          const portfolio = winnerPortfolios.find((p) => p.portfolioId === winner.portfolioId);
+          if (portfolio) {
+            await Portfolio.findOneAndUpdate(
+              { portfolioId: portfolio.portfolioId },
+              {
+                $set: {
+                  "gameOutcome.rewardTransactionHash": "APE_SYSTEM_WIN_NO_DISTRIBUTION",
+                },
+              }
+            );
+            await game.markWinnerRewardDistributed(winner._id, "APE_SYSTEM_WIN_NO_DISTRIBUTION");
+            console.log(
+              `[REWARDS] 🦍 APE portfolio ${portfolio.portfolioId} marked as distributed (no blockchain tx needed)`
+            );
+          }
+        }
+
+        // Mark game as fully distributed and completed - no blockchain calls made!
+        console.log(
+          `[REWARDS] ✅ Game ${gameId}: Marlow won - game completed without blockchain distribution (gas saved!)`
+        );
+        await game.markFullyDistributed();
+        game.status = "COMPLETED";
+        await game.save();
+        return;
+      }
+      // ====== END OPTIMIZATION ======
 
       // Process in batches - smaller batches are safer for blockchain
       const batch = undistributedWinners.slice(0, batchSize);
@@ -1064,7 +1077,7 @@ class GameService {
           );
         }
 
-        for (const winner of batch.filter(w => portfolioIds.includes(w.portfolioId))) {
+        for (const winner of batch.filter((w) => portfolioIds.includes(w.portfolioId))) {
           await game.markWinnerRewardDistributed(winner._id, result.transactionHash);
         }
       }
@@ -1083,14 +1096,15 @@ class GameService {
       await game.markFullyDistributed();
       game.status = "COMPLETED";
       await game.save();
-
     } catch (error) {
       console.error(`[REWARDS] ❌ Game ${gameId}: Error distributing rewards:`, error.message);
 
       // Retry logic for transient errors
       if (retryCount < maxRetries) {
         const waitTime = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-        console.log(`[REWARDS] Game ${gameId}: Retrying in ${waitTime/1000}s (attempt ${retryCount + 1}/${maxRetries})`);
+        console.log(
+          `[REWARDS] Game ${gameId}: Retrying in ${waitTime / 1000}s (attempt ${retryCount + 1}/${maxRetries})`
+        );
         await new Promise((resolve) => setTimeout(resolve, waitTime));
         return this.distributeGameRewards(game, batchSize, retryCount + 1, maxRetries);
       }

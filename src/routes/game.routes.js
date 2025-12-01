@@ -22,6 +22,13 @@ router.get("/marlow-earnings", isAdmin, gameController.getMarlowEarnings);
 router.post("/withdraw-marlow-earnings/:gameId", isAdmin, gameController.withdrawMarlowEarnings);
 router.get("/admin-game-details/:gameId", isAdmin, gameController.getAdminGameDetails);
 
+// Marlow Reward Management Routes
+router.get("/admin/marlow-health", isAdmin, gameController.getMarlowHealthCheck);
+router.post("/admin/fix-marlow-rewards", isAdmin, gameController.fixMarlowRewards);
+router.get("/admin/reward-status/:gameId", isAdmin, gameController.getGameRewardStatus);
+router.post("/admin/process-rewards/:gameId", isAdmin, gameController.processRemainingRewards);
+router.get("/admin/all-rewards-summary", isAdmin, gameController.getAllGamesRewardSummary);
+
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);
 router.get("/stats/leaderboard", gameController.getGlobalLeaderboard);
