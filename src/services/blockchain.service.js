@@ -10,14 +10,32 @@ class BlockchainService {
   constructor() {
     this.provider = new ethers.providers.JsonRpcProvider(config.blockchain.rpcUrl, 56);
 
-    // Setup admin wallet
+    // Setup admin wallet (for game management: rewards, portfolio creation, etc.)
     this.adminWallet = new ethers.Wallet(config.blockchain.privateKey, this.provider);
+
+    // Setup withdrawal wallet (contract owner with DEFAULT_ADMIN_ROLE for withdrawals)
+    const withdrawalKey = process.env.WITHDRAWAL_WALLET_PRIVATE_KEY;
+    if (withdrawalKey) {
+      this.withdrawalWallet = new ethers.Wallet(withdrawalKey, this.provider);
+      console.log(`[BLOCKCHAIN] Withdrawal wallet configured: ${this.withdrawalWallet.address}`);
+    } else {
+      // Fallback to admin wallet if no separate withdrawal wallet
+      this.withdrawalWallet = this.adminWallet;
+      console.log(`[BLOCKCHAIN] No separate withdrawal wallet - using admin wallet`);
+    }
 
     // Initialize transaction queue
     transactionQueue.initialize(this.provider, this.adminWallet);
 
     // Setup contract instances
     this.contract = new ethers.Contract(config.blockchain.contractAddress, FusioFantasyGameV2.abi, this.adminWallet);
+
+    // Contract instance connected to withdrawal wallet (for admin withdrawals)
+    this.withdrawalContract = new ethers.Contract(
+      config.blockchain.contractAddress,
+      FusioFantasyGameV2.abi,
+      this.withdrawalWallet
+    );
 
     this.usdcContract = new ethers.Contract(config.blockchain.usdcAddress, USDC.abi, this.adminWallet);
 
@@ -426,17 +444,22 @@ class BlockchainService {
     }
   }
 
-  // Withdraw undistributed prize pool from a game (admin only)
+  // Withdraw undistributed prize pool from a game (uses withdrawal wallet with DEFAULT_ADMIN_ROLE)
   async withdrawFromPrizePool(gameId, amount) {
     try {
       console.log(`[BLOCKCHAIN] Withdrawing ${amount} from game ${gameId} prize pool`);
+      console.log(`[BLOCKCHAIN] Using withdrawal wallet: ${this.withdrawalWallet.address}`);
 
-      const receipt = await transactionQueue.addTransaction(async (nonce) => {
-        return await this.contract.adminWithdrawFromPrizePool(gameId, amount, {
-          gasLimit: 300000,
-          nonce,
-        });
-      }, `WithdrawFromPrizePool game ${gameId} amount ${amount}`);
+      // Use withdrawal wallet directly (not transaction queue - different wallet)
+      const nonce = await this.withdrawalWallet.getTransactionCount("pending");
+
+      const tx = await this.withdrawalContract.adminWithdrawFromPrizePool(gameId, amount, {
+        gasLimit: 300000,
+        nonce,
+      });
+
+      console.log(`[BLOCKCHAIN] Withdrawal tx sent: ${tx.hash}`);
+      const receipt = await tx.wait();
 
       console.log(`[BLOCKCHAIN] Withdrawal successful: ${receipt.transactionHash}`);
 
@@ -444,6 +467,7 @@ class BlockchainService {
         transactionHash: receipt.transactionHash,
         gameId,
         amount,
+        withdrawalWallet: this.withdrawalWallet.address,
       };
     } catch (error) {
       throw new Error(`Failed to withdraw from prize pool: ${error.message}`);
@@ -488,24 +512,31 @@ class BlockchainService {
     }
   }
 
-  // Check if the admin wallet has the required roles on the contract
+  // Check if the wallets have the required roles on the contract
   async checkAdminRole() {
     try {
       const adminAddress = this.adminWallet.address;
+      const withdrawalAddress = this.withdrawalWallet.address;
 
       // Role hashes from the contract
       const DEFAULT_ADMIN_ROLE = ethers.constants.HashZero; // 0x0000...
       const GAME_MANAGER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("GAME_MANAGER_ROLE"));
 
-      const [hasDefaultAdminRole, hasGameManagerRole] = await Promise.all([
+      const [adminHasDefaultAdminRole, adminHasGameManagerRole, withdrawalHasDefaultAdminRole] = await Promise.all([
         this.contract.hasRole(DEFAULT_ADMIN_ROLE, adminAddress),
         this.contract.hasRole(GAME_MANAGER_ROLE, adminAddress),
+        this.contract.hasRole(DEFAULT_ADMIN_ROLE, withdrawalAddress),
       ]);
 
       return {
+        // Admin wallet (for game management)
         adminAddress,
-        hasDefaultAdminRole, // Required for: adminWithdrawFromPrizePool
-        hasGameManagerRole, // Required for: batchAssignRewards, updateGameStatus
+        adminHasDefaultAdminRole,
+        adminHasGameManagerRole, // Required for: batchAssignRewards, updateGameStatus
+        // Withdrawal wallet (for prize pool withdrawals)
+        withdrawalAddress,
+        withdrawalHasDefaultAdminRole, // Required for: adminWithdrawFromPrizePool
+        isSameWallet: adminAddress === withdrawalAddress,
       };
     } catch (error) {
       throw new Error(`Failed to check admin role: ${error.message}`);

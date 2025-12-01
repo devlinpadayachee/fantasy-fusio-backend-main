@@ -1443,11 +1443,19 @@ const gameController = {
         gamesCount: marlowGames.length,
         gamesWithUnclaimed: earnings.filter((e) => e.canWithdraw).length,
         earnings: earnings,
-        adminWallet: adminWalletInfo
+        wallets: adminWalletInfo
           ? {
-              address: adminWalletInfo.adminAddress,
-              hasDefaultAdminRole: adminWalletInfo.hasDefaultAdminRole, // For withdrawals
-              hasGameManagerRole: adminWalletInfo.hasGameManagerRole, // For rewards
+              // Admin wallet (for rewards, game management)
+              admin: {
+                address: adminWalletInfo.adminAddress,
+                hasGameManagerRole: adminWalletInfo.adminHasGameManagerRole,
+              },
+              // Withdrawal wallet (for prize pool withdrawals)
+              withdrawal: {
+                address: adminWalletInfo.withdrawalAddress,
+                hasDefaultAdminRole: adminWalletInfo.withdrawalHasDefaultAdminRole,
+              },
+              isSameWallet: adminWalletInfo.isSameWallet,
             }
           : null,
       });
