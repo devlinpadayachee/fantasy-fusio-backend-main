@@ -450,12 +450,65 @@ class BlockchainService {
     }
   }
 
+  // Update game status on blockchain (transitions based on time)
+  // GameStatus enum: 0=NotStarted, 1=Active, 2=Ended
+  async updateGameStatus(gameId) {
+    try {
+      console.log(`[BLOCKCHAIN] Updating game ${gameId} status on-chain`);
+
+      const receipt = await transactionQueue.addTransaction(async (nonce) => {
+        return await this.contract.updateGameStatus(gameId, {
+          gasLimit: 150000,
+          nonce,
+        });
+      }, `UpdateGameStatus game ${gameId}`);
+
+      console.log(`[BLOCKCHAIN] Game ${gameId} status updated: ${receipt.transactionHash}`);
+
+      return {
+        transactionHash: receipt.transactionHash,
+        gameId,
+      };
+    } catch (error) {
+      // If already in correct state, don't throw
+      if (error.message.includes("already") || error.message.includes("status")) {
+        console.log(`[BLOCKCHAIN] Game ${gameId} status already correct or updated`);
+        return { gameId, alreadyUpdated: true };
+      }
+      throw new Error(`Failed to update game status: ${error.message}`);
+    }
+  }
+
   async getPortfolioOwner(portfolioId) {
     try {
       const owner = await this.contract.getPortfolioOwner(portfolioId);
       return owner;
     } catch (error) {
       throw new Error(`Failed to get portfolio owner: ${error.message}`);
+    }
+  }
+
+  // Check if the admin wallet has the required roles on the contract
+  async checkAdminRole() {
+    try {
+      const adminAddress = this.adminWallet.address;
+
+      // Role hashes from the contract
+      const DEFAULT_ADMIN_ROLE = ethers.constants.HashZero; // 0x0000...
+      const GAME_MANAGER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("GAME_MANAGER_ROLE"));
+
+      const [hasDefaultAdminRole, hasGameManagerRole] = await Promise.all([
+        this.contract.hasRole(DEFAULT_ADMIN_ROLE, adminAddress),
+        this.contract.hasRole(GAME_MANAGER_ROLE, adminAddress),
+      ]);
+
+      return {
+        adminAddress,
+        hasDefaultAdminRole, // Required for: adminWithdrawFromPrizePool
+        hasGameManagerRole, // Required for: batchAssignRewards, updateGameStatus
+      };
+    } catch (error) {
+      throw new Error(`Failed to check admin role: ${error.message}`);
     }
   }
 

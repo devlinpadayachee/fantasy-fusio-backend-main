@@ -1430,11 +1430,26 @@ const gameController = {
       // Sort by available to withdraw (highest first)
       earnings.sort((a, b) => (b.availableToWithdraw || 0) - (a.availableToWithdraw || 0));
 
+      // Get admin wallet info for debugging
+      let adminWalletInfo = null;
+      try {
+        adminWalletInfo = await blockchainService.checkAdminRole();
+      } catch (err) {
+        console.warn("Could not check admin role:", err.message);
+      }
+
       res.json({
         totalUnclaimed: totalUnclaimed,
         gamesCount: marlowGames.length,
         gamesWithUnclaimed: earnings.filter((e) => e.canWithdraw).length,
         earnings: earnings,
+        adminWallet: adminWalletInfo
+          ? {
+              address: adminWalletInfo.adminAddress,
+              hasDefaultAdminRole: adminWalletInfo.hasDefaultAdminRole, // For withdrawals
+              hasGameManagerRole: adminWalletInfo.hasGameManagerRole, // For rewards
+            }
+          : null,
       });
     } catch (error) {
       console.error("Error fetching Marlow earnings:", error);
@@ -1459,16 +1474,40 @@ const gameController = {
       }
 
       // Get current prize pool info from blockchain
-      const gameDetails = await blockchainService.getGameDetails(parseInt(gameId));
+      let gameDetails;
+      try {
+        gameDetails = await blockchainService.getGameDetails(parseInt(gameId));
+      } catch (err) {
+        return res.status(400).json({
+          error: "Game does not exist on blockchain",
+          details: `Game ${gameId} may not have been created on-chain. Error: ${err.message}`,
+          suggestion: "Ensure the game was properly initialized on the blockchain",
+        });
+      }
+
       const totalPrizePool = BigInt(gameDetails.totalPrizePool);
       const totalDistributed = BigInt(gameDetails.totalRewardDistributed);
       const availableToWithdraw = totalPrizePool - totalDistributed;
+
+      console.log(`[MARLOW] Game ${gameId} blockchain state:`);
+      console.log(`  - Total Prize Pool: ${ethers.utils.formatUnits(totalPrizePool.toString(), 18)} USDC`);
+      console.log(`  - Total Distributed: ${ethers.utils.formatUnits(totalDistributed.toString(), 18)} USDC`);
+      console.log(`  - Available to Withdraw: ${ethers.utils.formatUnits(availableToWithdraw.toString(), 18)} USDC`);
+
+      if (totalPrizePool === 0n) {
+        return res.status(400).json({
+          error: "Game has no prize pool on blockchain",
+          totalPrizePool: "0",
+          details: "This game may not have been properly created on the blockchain, or portfolios were not locked",
+        });
+      }
 
       if (availableToWithdraw <= 0n) {
         return res.status(400).json({
           error: "No funds available to withdraw",
           totalPrizePool: ethers.utils.formatUnits(totalPrizePool.toString(), 18),
           totalDistributed: ethers.utils.formatUnits(totalDistributed.toString(), 18),
+          details: "All prize pool funds have already been distributed to winners",
         });
       }
 
@@ -1491,11 +1530,27 @@ const gameController = {
       });
     } catch (error) {
       console.error(`Error withdrawing from game ${gameId}:`, error);
+
+      let errorDetails = "Check server logs for details";
+      let suggestion = "";
+
+      if (error.message.includes("INSUFFICIENT_FUNDS")) {
+        errorDetails = "Admin wallet needs more BNB for gas fees";
+        suggestion = "Top up the admin wallet with BNB";
+      } else if (error.message.includes("CALL_EXCEPTION")) {
+        errorDetails = "Smart contract rejected the transaction";
+        suggestion =
+          "Possible causes: 1) Admin wallet doesn't have DEFAULT_ADMIN_ROLE on contract, " +
+          "2) Game doesn't exist on blockchain, " +
+          "3) Amount exceeds available prize pool. " +
+          "Check the game details endpoint for blockchain state.";
+      }
+
       res.status(500).json({
         error: error.message,
-        details: error.message.includes("INSUFFICIENT_FUNDS")
-          ? "Admin wallet needs more BNB for gas fees"
-          : "Check server logs for details",
+        details: errorDetails,
+        suggestion,
+        gameId: parseInt(gameId),
       });
     }
   }),
