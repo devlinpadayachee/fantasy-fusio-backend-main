@@ -364,15 +364,24 @@ class MarlowAIService {
         if (prices.length >= 7) {
           btcChange7d = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
         }
+        const btcData = btcResponse.data.Data?.Data || [];
         btcApiResult = {
           success: true,
-          source: "cryptocompare.com",
+          source: "cryptocompare.com/BTC-histoday",
           duration: Date.now() - btcStart,
           response: {
             pricesCount: prices.length,
             firstPrice: prices[0],
             lastPrice: prices[prices.length - 1],
             change7d: btcChange7d.toFixed(2) + "%",
+            // Include the actual price series
+            priceHistory: btcData.map((d) => ({
+              date: new Date(d.time * 1000).toISOString().split("T")[0],
+              close: d.close,
+              high: d.high,
+              low: d.low,
+              volume: d.volumeto,
+            })),
           },
         };
       } catch (e) {
@@ -485,7 +494,14 @@ class MarlowAIService {
       apiResult.response = {
         articlesFound: articles.length,
         categoriesQueried: categories,
-        sampleTitles: articles.slice(0, 3).map((a) => a.title?.substring(0, 60)),
+        // Include sample articles with more detail
+        sampleArticles: articles.slice(0, 5).map((a) => ({
+          title: a.title?.substring(0, 80),
+          source: a.source,
+          categories: a.categories,
+          publishedOn: a.published_on ? new Date(a.published_on * 1000).toISOString() : null,
+          url: a.url,
+        })),
       };
 
       // Count positive/negative mentions per asset
@@ -683,6 +699,8 @@ Your picks:`;
       successful: 0,
       failed: 0,
       failedAssets: [],
+      // Per-asset detailed results for full transparency
+      assetDetails: [],
     };
 
     const fetchStart = Date.now();
@@ -701,6 +719,25 @@ Your picks:`;
           marketData: data,
         });
         marketDataResults.successful++;
+
+        // Capture per-asset API response for diagnostics
+        marketDataResults.assetDetails.push({
+          symbol: asset.symbol,
+          success: true,
+          calculatedIndicators: {
+            currentPrice: data.currentPrice,
+            priceChange24h: data.priceChange24h?.toFixed(2) + "%",
+            priceChange7d: data.priceChange7d?.toFixed(2) + "%",
+            priceChange14d: data.priceChange14d?.toFixed(2) + "%",
+            rsi: data.rsi?.toFixed(1),
+            volatility: data.volatility?.toFixed(1) + "%",
+            volumeChange: data.volumeChange?.toFixed(1) + "%",
+            momentum: data.momentum?.toFixed(2),
+            highLowRatio: data.highLowRatio?.toFixed(3),
+          },
+          rawApiData: data.rawApiData || null,
+          apiError: data.apiError || null,
+        });
       } catch (error) {
         console.warn(`⚠️ Could not fetch data for ${asset.symbol}:`, error.message);
         marketDataResults.failed++;
@@ -710,6 +747,12 @@ Your picks:`;
         assetData.push({
           ...asset.toObject(),
           marketData: this.getNeutralMarketData(),
+        });
+
+        marketDataResults.assetDetails.push({
+          symbol: asset.symbol,
+          success: false,
+          error: error.message,
         });
       }
     }
@@ -741,7 +784,11 @@ Your picks:`;
 
       const data = response.data.Data?.Data || [];
       if (data.length < 7) {
-        return this.getNeutralMarketData();
+        return {
+          ...this.getNeutralMarketData(),
+          rawApiData: { dataPoints: data.length, error: "Insufficient data points (need 7+)" },
+          apiError: `Only ${data.length} data points returned`,
+        };
       }
 
       // Calculate indicators
@@ -761,10 +808,39 @@ Your picks:`;
         volatility: this.calculateVolatility(prices),
         momentum: this.calculateMomentum(prices),
         highLowRatio: this.calculateHighLowPosition(prices[prices.length - 1], highs, lows),
+        // Include raw API data for diagnostics
+        rawApiData: {
+          source: "cryptocompare.com/histoday",
+          dataPoints: data.length,
+          dateRange: {
+            from: new Date(data[0].time * 1000).toISOString().split("T")[0],
+            to: new Date(data[data.length - 1].time * 1000).toISOString().split("T")[0],
+          },
+          latestCandle: {
+            time: new Date(data[data.length - 1].time * 1000).toISOString(),
+            open: data[data.length - 1].open,
+            high: data[data.length - 1].high,
+            low: data[data.length - 1].low,
+            close: data[data.length - 1].close,
+            volume: data[data.length - 1].volumeto,
+          },
+          priceRange: {
+            min: Math.min(...prices).toFixed(2),
+            max: Math.max(...prices).toFixed(2),
+          },
+          volumeRange: {
+            min: Math.min(...volumes).toFixed(0),
+            max: Math.max(...volumes).toFixed(0),
+          },
+        },
       };
     } catch (error) {
       console.warn(`Crypto data fetch failed for ${symbol}:`, error.message);
-      return this.getNeutralMarketData();
+      return {
+        ...this.getNeutralMarketData(),
+        rawApiData: null,
+        apiError: error.message,
+      };
     }
   }
 
@@ -784,7 +860,11 @@ Your picks:`;
 
       const timeSeries = response.data["Time Series (Daily)"];
       if (!timeSeries) {
-        return this.getNeutralMarketData();
+        return {
+          ...this.getNeutralMarketData(),
+          rawApiData: { error: "No time series data returned", responseKeys: Object.keys(response.data) },
+          apiError: "No time series data in AlphaVantage response",
+        };
       }
 
       const dates = Object.keys(timeSeries).slice(0, 14);
@@ -799,6 +879,9 @@ Your picks:`;
       highs.reverse();
       lows.reverse();
 
+      // Get the dates in proper order for diagnostics
+      const sortedDates = [...dates].reverse();
+
       return {
         currentPrice: prices[prices.length - 1],
         priceChange24h: this.calculateChange(prices, 1),
@@ -810,10 +893,39 @@ Your picks:`;
         volatility: this.calculateVolatility(prices),
         momentum: this.calculateMomentum(prices),
         highLowRatio: this.calculateHighLowPosition(prices[prices.length - 1], highs, lows),
+        // Include raw API data for diagnostics
+        rawApiData: {
+          source: "alphavantage.co/TIME_SERIES_DAILY",
+          dataPoints: dates.length,
+          dateRange: {
+            from: sortedDates[0],
+            to: sortedDates[sortedDates.length - 1],
+          },
+          latestCandle: {
+            date: sortedDates[sortedDates.length - 1],
+            open: parseFloat(timeSeries[dates[0]]["1. open"]),
+            high: parseFloat(timeSeries[dates[0]]["2. high"]),
+            low: parseFloat(timeSeries[dates[0]]["3. low"]),
+            close: parseFloat(timeSeries[dates[0]]["4. close"]),
+            volume: parseFloat(timeSeries[dates[0]]["5. volume"]),
+          },
+          priceRange: {
+            min: Math.min(...prices).toFixed(2),
+            max: Math.max(...prices).toFixed(2),
+          },
+          volumeRange: {
+            min: Math.min(...volumes).toFixed(0),
+            max: Math.max(...volumes).toFixed(0),
+          },
+        },
       };
     } catch (error) {
       console.warn(`TradFi data fetch failed for ${symbol}:`, error.message);
-      return this.getNeutralMarketData();
+      return {
+        ...this.getNeutralMarketData(),
+        rawApiData: null,
+        apiError: error.message,
+      };
     }
   }
 
