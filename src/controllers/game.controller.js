@@ -2374,8 +2374,9 @@ const gameController = {
     const { gameType } = req.params;
 
     try {
-      if (!["CRYPTO", "DEFI", "TRADFI"].includes(gameType.toUpperCase())) {
-        return res.status(400).json({ error: "Invalid game type. Use CRYPTO, DEFI, or TRADFI" });
+      // Note: Assets only support DEFI and TRADFI types
+      if (!["DEFI", "TRADFI"].includes(gameType.toUpperCase())) {
+        return res.status(400).json({ error: "Invalid game type. Use DEFI or TRADFI" });
       }
 
       console.log(`[ADMIN] Marlow AI preview requested for ${gameType}`);
