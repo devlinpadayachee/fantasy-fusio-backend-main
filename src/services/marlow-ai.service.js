@@ -51,49 +51,243 @@ class MarlowAIService {
   async generateSmartPortfolio(gameType, numAssets = 8) {
     console.log(`🦍🧠 Marlow AI analyzing market for ${gameType} portfolio...`);
 
+    // Initialize diagnostics to track each step
+    const diagnostics = {
+      startTime: new Date().toISOString(),
+      gameType,
+      numAssets,
+      steps: [],
+      apiCalls: [],
+      errors: [],
+      timing: {},
+    };
+
+    const startTotal = Date.now();
+
     try {
       // 1. Get all eligible assets
+      const stepStart1 = Date.now();
       const assets = await Asset.find({
         type: gameType,
         isActive: true,
         ape: true,
       });
+      diagnostics.timing.assetQuery = Date.now() - stepStart1;
+      diagnostics.steps.push({
+        step: 1,
+        name: "Asset Query",
+        status: "success",
+        duration: diagnostics.timing.assetQuery,
+        details: {
+          query: { type: gameType, isActive: true, ape: true },
+          assetsFound: assets.length,
+          assetSymbols: assets.map((a) => a.symbol),
+        },
+      });
 
       if (assets.length < numAssets) {
-        throw new Error(`Not enough active ${gameType} assets available`);
+        throw new Error(`Not enough active ${gameType} assets available (found ${assets.length}, need ${numAssets})`);
       }
 
       // 2. Get market regime (bull/bear/neutral)
-      const marketRegime = await this.detectMarketRegime(gameType);
+      const stepStart2 = Date.now();
+      const marketRegime = await this.detectMarketRegime(gameType, diagnostics);
+      diagnostics.timing.marketRegime = Date.now() - stepStart2;
+      diagnostics.steps.push({
+        step: 2,
+        name: "Market Regime Detection",
+        status: "success",
+        duration: diagnostics.timing.marketRegime,
+        details: {
+          regime: marketRegime.regime,
+          fearGreedIndex: marketRegime.fearGreedIndex,
+          btcChange24h: marketRegime.btcChange24h,
+          confidence: marketRegime.confidence,
+        },
+      });
       console.log(`🦍 Market Regime: ${marketRegime.regime} (Fear/Greed: ${marketRegime.fearGreedIndex})`);
 
       // 3. Adjust strategy weights based on regime
       this.adjustStrategyForRegime(marketRegime);
+      diagnostics.steps.push({
+        step: 3,
+        name: "Strategy Adjustment",
+        status: "success",
+        duration: 0,
+        details: {
+          adjustedWeights: { ...this.strategyWeights },
+        },
+      });
 
       // 4. Fetch market data for all assets (parallel for speed)
-      const assetData = await this.fetchMarketData(assets, gameType);
+      const stepStart4 = Date.now();
+      const assetData = await this.fetchMarketData(assets, gameType, diagnostics);
+      diagnostics.timing.marketData = Date.now() - stepStart4;
+      diagnostics.steps.push({
+        step: 4,
+        name: "Market Data Fetch",
+        status: "success",
+        duration: diagnostics.timing.marketData,
+        details: {
+          assetsProcessed: assetData.length,
+          assetsWithData: assetData.filter((a) => a.marketData).length,
+          sampleData: assetData.slice(0, 3).map((a) => ({
+            symbol: a.symbol,
+            hasMarketData: !!a.marketData,
+            price: a.marketData?.currentPrice,
+            change24h: a.marketData?.change24h,
+          })),
+        },
+      });
 
       // 5. Fetch sentiment data for crypto assets
+      const stepStart5 = Date.now();
       if (gameType === "CRYPTO" || gameType === "DEFI") {
-        await this.enrichWithSentiment(assetData);
+        await this.enrichWithSentiment(assetData, diagnostics);
+        diagnostics.timing.sentiment = Date.now() - stepStart5;
+        diagnostics.steps.push({
+          step: 5,
+          name: "Sentiment Analysis",
+          status: "success",
+          duration: diagnostics.timing.sentiment,
+          details: {
+            assetsWithSentiment: assetData.filter((a) => a.sentiment).length,
+            sampleSentiment: assetData.slice(0, 3).map((a) => ({
+              symbol: a.symbol,
+              sentiment: a.sentiment,
+              newsCount: a.newsCount || 0,
+            })),
+          },
+        });
+      } else {
+        diagnostics.steps.push({
+          step: 5,
+          name: "Sentiment Analysis",
+          status: "skipped",
+          duration: 0,
+          details: { reason: `Skipped for ${gameType} - only applies to CRYPTO/DEFI` },
+        });
       }
 
       // 6. Score each asset using multiple strategies
+      const stepStart6 = Date.now();
       const scoredAssets = this.scoreAssets(assetData, marketRegime);
+      diagnostics.timing.scoring = Date.now() - stepStart6;
+      diagnostics.steps.push({
+        step: 6,
+        name: "Asset Scoring",
+        status: "success",
+        duration: diagnostics.timing.scoring,
+        details: {
+          scoredCount: scoredAssets.length,
+          topScores: scoredAssets
+            .sort((a, b) => b.totalScore - a.totalScore)
+            .slice(0, 5)
+            .map((a) => ({
+              symbol: a.symbol,
+              totalScore: a.totalScore,
+              scores: a.scores,
+            })),
+          bottomScores: scoredAssets
+            .sort((a, b) => a.totalScore - b.totalScore)
+            .slice(0, 3)
+            .map((a) => ({
+              symbol: a.symbol,
+              totalScore: a.totalScore,
+            })),
+        },
+      });
 
       // 7. Select top assets based on combined score
+      const stepStart7 = Date.now();
       let selectedAssets = this.selectTopAssets(scoredAssets, numAssets);
+      diagnostics.timing.selection = Date.now() - stepStart7;
+      diagnostics.steps.push({
+        step: 7,
+        name: "Asset Selection",
+        status: "success",
+        duration: diagnostics.timing.selection,
+        details: {
+          selectedCount: selectedAssets.length,
+          selected: selectedAssets.map((a) => ({
+            symbol: a.symbol,
+            totalScore: a.totalScore,
+            reasoning: a.reasoning,
+          })),
+        },
+      });
 
       // 8. Optional: Use GPT-4 for final optimization
-      if (this.openaiEnabled && gameType === "CRYPTO") {
-        selectedAssets = await this.gptOptimize(selectedAssets, marketRegime);
+      const stepStart8 = Date.now();
+      let gptUsed = false;
+      if (this.openaiEnabled && (gameType === "CRYPTO" || gameType === "DEFI")) {
+        try {
+          selectedAssets = await this.gptOptimize(selectedAssets, marketRegime, diagnostics);
+          gptUsed = true;
+          diagnostics.timing.gptOptimization = Date.now() - stepStart8;
+          diagnostics.steps.push({
+            step: 8,
+            name: "GPT-4 Optimization",
+            status: "success",
+            duration: diagnostics.timing.gptOptimization,
+            details: {
+              enabled: true,
+              used: true,
+              optimizedPicks: selectedAssets.map((a) => a.symbol),
+            },
+          });
+        } catch (gptError) {
+          diagnostics.timing.gptOptimization = Date.now() - stepStart8;
+          diagnostics.steps.push({
+            step: 8,
+            name: "GPT-4 Optimization",
+            status: "error",
+            duration: diagnostics.timing.gptOptimization,
+            details: {
+              enabled: true,
+              used: false,
+              error: gptError.message,
+            },
+          });
+          diagnostics.errors.push({ step: 8, error: gptError.message });
+        }
+      } else {
+        diagnostics.steps.push({
+          step: 8,
+          name: "GPT-4 Optimization",
+          status: "skipped",
+          duration: 0,
+          details: {
+            enabled: this.openaiEnabled,
+            reason: this.openaiEnabled ? `Skipped for ${gameType}` : "OpenAI API key not configured",
+          },
+        });
       }
 
       // 9. Calculate optimal allocations
       const allocations = this.calculateAllocations(selectedAssets, marketRegime);
+      diagnostics.steps.push({
+        step: 9,
+        name: "Allocation Calculation",
+        status: "success",
+        duration: 0,
+        details: {
+          allocations: selectedAssets.map((a, i) => ({
+            symbol: a.symbol,
+            allocation: allocations[i],
+            percentage: `${(allocations[i] / 1000).toFixed(1)}%`,
+          })),
+          totalAllocation: allocations.reduce((sum, a) => sum + a, 0),
+        },
+      });
 
       // 10. Log Marlow's reasoning
       this.logMarlowsThinking(selectedAssets, allocations, marketRegime);
+
+      // Finalize diagnostics
+      diagnostics.timing.total = Date.now() - startTotal;
+      diagnostics.endTime = new Date().toISOString();
+      diagnostics.success = true;
 
       return {
         assets: selectedAssets.map((a) => ({
@@ -104,33 +298,64 @@ class MarlowAIService {
         })),
         allocations,
         strategy: this.getStrategyExplanation(selectedAssets, marketRegime),
+        diagnostics, // Include full diagnostics in response
       };
     } catch (error) {
       console.error("🦍❌ Marlow AI error, falling back to smart random:", error.message);
-      return this.fallbackStrategy(gameType, numAssets);
+      diagnostics.timing.total = Date.now() - startTotal;
+      diagnostics.endTime = new Date().toISOString();
+      diagnostics.success = false;
+      diagnostics.errors.push({ step: "main", error: error.message, stack: error.stack?.split("\n").slice(0, 3) });
+
+      const fallbackResult = await this.fallbackStrategy(gameType, numAssets);
+      fallbackResult.diagnostics = {
+        ...diagnostics,
+        fallbackUsed: true,
+        fallbackReason: error.message,
+      };
+      return fallbackResult;
     }
   }
 
   /**
    * Detect current market regime using Fear & Greed Index and BTC performance
    */
-  async detectMarketRegime(gameType) {
+  async detectMarketRegime(gameType, diagnostics = null) {
+    const apiCalls = [];
     try {
       // Get Fear & Greed Index (crypto-specific)
       let fearGreedIndex = 50; // Neutral default
+      let fgApiResult = { success: false, source: "alternative.me/fng" };
 
       if (gameType === "CRYPTO" || gameType === "DEFI") {
         try {
+          const fgStart = Date.now();
           const fgResponse = await axios.get("https://api.alternative.me/fng/", { timeout: 5000 });
           fearGreedIndex = parseInt(fgResponse.data?.data?.[0]?.value) || 50;
+          fgApiResult = {
+            success: true,
+            source: "alternative.me/fng",
+            duration: Date.now() - fgStart,
+            response: {
+              value: fearGreedIndex,
+              classification: fgResponse.data?.data?.[0]?.value_classification,
+              timestamp: fgResponse.data?.data?.[0]?.timestamp,
+            },
+          };
         } catch (e) {
           console.warn("Could not fetch Fear & Greed index:", e.message);
+          fgApiResult = { success: false, source: "alternative.me/fng", error: e.message };
         }
+      } else {
+        fgApiResult = { success: false, source: "alternative.me/fng", skipped: true, reason: "Not crypto/defi" };
       }
+      apiCalls.push(fgApiResult);
 
       // Get BTC 7-day performance as market proxy
       let btcChange7d = 0;
+      let btcApiResult = { success: false, source: "cryptocompare.com" };
       try {
+        const btcStart = Date.now();
         const btcResponse = await axios.get("https://min-api.cryptocompare.com/data/v2/histoday", {
           params: { fsym: "BTC", tsym: "USD", limit: 7, api_key: config.apiKeys.cryptoCompare },
           timeout: 5000,
@@ -139,27 +364,62 @@ class MarlowAIService {
         if (prices.length >= 7) {
           btcChange7d = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
         }
+        btcApiResult = {
+          success: true,
+          source: "cryptocompare.com",
+          duration: Date.now() - btcStart,
+          response: {
+            pricesCount: prices.length,
+            firstPrice: prices[0],
+            lastPrice: prices[prices.length - 1],
+            change7d: btcChange7d.toFixed(2) + "%",
+          },
+        };
       } catch (e) {
         console.warn("Could not fetch BTC data:", e.message);
+        btcApiResult = { success: false, source: "cryptocompare.com", error: e.message };
       }
+      apiCalls.push(btcApiResult);
 
       // Determine regime
       let regime = "NEUTRAL";
-      if (fearGreedIndex >= this.regimes.BULL.fearGreed && btcChange7d >= this.regimes.BULL.btcChange7d) {
+      let confidence = "LOW";
+      const bullThreshold = { fearGreed: this.regimes.BULL.fearGreed, btcChange: this.regimes.BULL.btcChange7d };
+      const bearThreshold = { fearGreed: this.regimes.BEAR.fearGreed, btcChange: this.regimes.BEAR.btcChange7d };
+
+      if (fearGreedIndex >= bullThreshold.fearGreed && btcChange7d >= bullThreshold.btcChange) {
         regime = "BULL";
-      } else if (fearGreedIndex <= this.regimes.BEAR.fearGreed && btcChange7d <= this.regimes.BEAR.btcChange7d) {
+        confidence = "HIGH";
+      } else if (fearGreedIndex <= bearThreshold.fearGreed && btcChange7d <= bearThreshold.btcChange) {
         regime = "BEAR";
+        confidence = "HIGH";
+      } else if (fearGreedIndex >= 55 || btcChange7d >= 3) {
+        confidence = "MEDIUM"; // Leaning bullish
+      } else if (fearGreedIndex <= 45 || btcChange7d <= -3) {
+        confidence = "MEDIUM"; // Leaning bearish
+      }
+
+      // Add to diagnostics if provided
+      if (diagnostics) {
+        diagnostics.apiCalls.push(...apiCalls);
       }
 
       return {
         regime,
         fearGreedIndex,
         btcChange7d,
+        confidence,
+        thresholds: { bull: bullThreshold, bear: bearThreshold },
         timestamp: new Date(),
+        apiCalls, // Include API call details in return
       };
     } catch (error) {
       console.warn("Market regime detection failed:", error.message);
-      return { regime: "NEUTRAL", fearGreedIndex: 50, btcChange7d: 0 };
+      if (diagnostics) {
+        diagnostics.apiCalls.push(...apiCalls);
+        diagnostics.errors.push({ step: "marketRegime", error: error.message });
+      }
+      return { regime: "NEUTRAL", fearGreedIndex: 50, btcChange7d: 0, confidence: "NONE", error: error.message };
     }
   }
 
@@ -199,21 +459,34 @@ class MarlowAIService {
   /**
    * Enrich asset data with sentiment from news
    */
-  async enrichWithSentiment(assetData) {
+  async enrichWithSentiment(assetData, diagnostics = null) {
+    const apiResult = { source: "cryptocompare.com/news", success: false };
+    const sentimentResults = [];
+
     // Fetch trending topics / sentiment from CryptoCompare News API
     try {
+      const newsStart = Date.now();
+      const categories = assetData
+        .slice(0, 5)
+        .map((a) => a.symbol)
+        .join(",");
+
       const newsResponse = await axios.get("https://min-api.cryptocompare.com/data/v2/news/", {
         params: {
-          categories: assetData
-            .slice(0, 5)
-            .map((a) => a.symbol)
-            .join(","),
+          categories,
           api_key: config.apiKeys.cryptoCompare,
         },
         timeout: 5000,
       });
 
       const articles = newsResponse.data?.Data || [];
+      apiResult.success = true;
+      apiResult.duration = Date.now() - newsStart;
+      apiResult.response = {
+        articlesFound: articles.length,
+        categoriesQueried: categories,
+        sampleTitles: articles.slice(0, 3).map((a) => a.title?.substring(0, 60)),
+      };
 
       // Count positive/negative mentions per asset
       for (const asset of assetData) {
@@ -224,42 +497,76 @@ class MarlowAIService {
         );
 
         let sentimentScore = 50; // Neutral
+        let sentimentDetails = { mentions: mentions.length, positiveHits: [], negativeHits: [] };
+
         if (mentions.length > 0) {
           // Simple sentiment: more mentions = positive (assumes coverage is good)
-          // In production, you'd use NLP sentiment analysis
           sentimentScore = Math.min(80, 50 + mentions.length * 5);
 
           // Check for negative keywords
           const negativeWords = ["crash", "scam", "hack", "bear", "dump", "sell", "warning"];
-          const hasNegative = mentions.some((m) => negativeWords.some((w) => m.title?.toLowerCase().includes(w)));
+          const hasNegative = mentions.some((m) => {
+            const found = negativeWords.filter((w) => m.title?.toLowerCase().includes(w));
+            if (found.length) sentimentDetails.negativeHits.push(...found);
+            return found.length > 0;
+          });
           if (hasNegative) sentimentScore -= 20;
 
           // Check for positive keywords
           const positiveWords = ["surge", "rally", "bull", "growth", "partnership", "adoption"];
-          const hasPositive = mentions.some((m) => positiveWords.some((w) => m.title?.toLowerCase().includes(w)));
+          const hasPositive = mentions.some((m) => {
+            const found = positiveWords.filter((w) => m.title?.toLowerCase().includes(w));
+            if (found.length) sentimentDetails.positiveHits.push(...found);
+            return found.length > 0;
+          });
           if (hasPositive) sentimentScore += 15;
         }
 
-        asset.marketData.sentimentScore = Math.max(0, Math.min(100, sentimentScore));
+        const finalScore = Math.max(0, Math.min(100, sentimentScore));
+        asset.marketData.sentimentScore = finalScore;
         asset.marketData.newsMentions = mentions.length;
+
+        sentimentResults.push({
+          symbol: asset.symbol,
+          score: finalScore,
+          mentions: mentions.length,
+          details: sentimentDetails,
+        });
       }
+
+      apiResult.sentimentResults = sentimentResults.slice(0, 5); // Top 5 for diagnostics
     } catch (error) {
       console.warn("Sentiment enrichment failed:", error.message);
+      apiResult.error = error.message;
+
       // Set neutral sentiment if failed
       for (const asset of assetData) {
-        asset.marketData.sentimentScore = 50;
-        asset.marketData.newsMentions = 0;
+        if (asset.marketData) {
+          asset.marketData.sentimentScore = 50;
+          asset.marketData.newsMentions = 0;
+        }
       }
+    }
+
+    if (diagnostics) {
+      diagnostics.apiCalls.push(apiResult);
     }
   }
 
   /**
    * Use GPT-4 for final portfolio optimization (optional)
    */
-  async gptOptimize(selectedAssets, marketRegime) {
+  async gptOptimize(selectedAssets, marketRegime, diagnostics = null) {
     if (!this.openaiEnabled) return selectedAssets;
 
+    const apiResult = {
+      source: "openai/gpt-4o-mini",
+      success: false,
+      enabled: true,
+    };
+
     try {
+      const gptStart = Date.now();
       const OpenAI = require("openai");
       const openai = new OpenAI({ apiKey: config.apiKeys.openai });
 
@@ -289,6 +596,13 @@ Consider:
 
 Your picks:`;
 
+      apiResult.request = {
+        model: "gpt-4o-mini",
+        promptLength: prompt.length,
+        inputAssets: assetSummary.map((a) => a.symbol),
+        temperature: 0.3,
+      };
+
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
@@ -297,12 +611,21 @@ Your picks:`;
       });
 
       const response = completion.choices[0]?.message?.content || "";
+      apiResult.duration = Date.now() - gptStart;
+      apiResult.response = {
+        rawResponse: response,
+        tokensUsed: completion.usage,
+        finishReason: completion.choices[0]?.finish_reason,
+      };
 
       // Parse GPT response
       const match = response.match(/\[[\s\S]*\]/);
       if (match) {
         const gptPicks = JSON.parse(match[0]);
         console.log("🦍🤖 GPT-4 optimized picks:", gptPicks);
+
+        apiResult.success = true;
+        apiResult.parsedPicks = gptPicks;
 
         // Reorder assets based on GPT suggestion
         const reordered = [];
@@ -315,16 +638,35 @@ Your picks:`;
         }
 
         // Add any missing assets from original selection
+        const added = [];
         for (const asset of selectedAssets) {
           if (!reordered.find((a) => a.symbol === asset.symbol)) {
+            added.push(asset.symbol);
             reordered.push(asset);
           }
         }
 
+        apiResult.reorderingDetails = {
+          gptRecommended: gptPicks,
+          addedFromOriginal: added,
+          finalOrder: reordered.slice(0, 8).map((a) => a.symbol),
+        };
+
+        if (diagnostics) {
+          diagnostics.apiCalls.push(apiResult);
+        }
+
         return reordered.slice(0, 8);
+      } else {
+        apiResult.parseError = "Could not find JSON array in response";
       }
     } catch (error) {
       console.warn("GPT optimization failed:", error.message);
+      apiResult.error = error.message;
+    }
+
+    if (diagnostics) {
+      diagnostics.apiCalls.push(apiResult);
     }
 
     return selectedAssets;
@@ -333,8 +675,17 @@ Your picks:`;
   /**
    * Fetch market data from CryptoCompare/AlphaVantage
    */
-  async fetchMarketData(assets, gameType) {
+  async fetchMarketData(assets, gameType, diagnostics = null) {
     const assetData = [];
+    const marketDataResults = {
+      source: gameType === "TRADFI" ? "alphavantage.co" : "cryptocompare.com",
+      assetsQueried: assets.length,
+      successful: 0,
+      failed: 0,
+      failedAssets: [],
+    };
+
+    const fetchStart = Date.now();
 
     for (const asset of assets) {
       try {
@@ -349,14 +700,24 @@ Your picks:`;
           ...asset.toObject(),
           marketData: data,
         });
+        marketDataResults.successful++;
       } catch (error) {
         console.warn(`⚠️ Could not fetch data for ${asset.symbol}:`, error.message);
+        marketDataResults.failed++;
+        marketDataResults.failedAssets.push({ symbol: asset.symbol, error: error.message });
+
         // Include asset with neutral scores if data unavailable
         assetData.push({
           ...asset.toObject(),
           marketData: this.getNeutralMarketData(),
         });
       }
+    }
+
+    marketDataResults.duration = Date.now() - fetchStart;
+
+    if (diagnostics) {
+      diagnostics.apiCalls.push(marketDataResults);
     }
 
     return assetData;
@@ -615,61 +976,29 @@ Your picks:`;
   }
 
   /**
-   * Calculate optimal allocations based on scores, confidence, and market regime
+   * Calculate allocations using FIXED amounts (same as player portfolios)
+   * Assets are already sorted by score, so higher scored assets get larger allocations
+   * This matches exactly what players use: [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000]
    */
   calculateAllocations(selectedAssets, marketRegime = {}) {
-    const totalScore = selectedAssets.reduce((sum, a) => sum + Math.max(a.totalScore, 10), 0);
-    const TOTAL_VALUE = 100000; // $100,000 portfolio
+    // FIXED allocations - must match player portfolio allocations exactly
+    // Total = $100,000: 20% + 20% + 15% + 15% + 10% + 10% + 5% + 5%
+    const FIXED_ALLOCATIONS = [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000];
 
-    // Adjust min/max based on regime
-    let MIN_ALLOC, MAX_ALLOC;
-    if (marketRegime.regime === "BULL") {
-      // Bull market: concentrate on winners
-      MIN_ALLOC = 5000; // $5,000 (5%)
-      MAX_ALLOC = 30000; // $30,000 (30%)
-    } else if (marketRegime.regime === "BEAR") {
-      // Bear market: more diversification
-      MIN_ALLOC = 8000; // $8,000 (8%)
-      MAX_ALLOC = 18000; // $18,000 (18%)
-    } else {
-      // Neutral: balanced
-      MIN_ALLOC = 5000; // $5,000 (5%)
-      MAX_ALLOC = 25000; // $25,000 (25%)
-    }
+    // Take only as many allocations as we have assets
+    const numAssets = selectedAssets.length;
+    let allocations = FIXED_ALLOCATIONS.slice(0, numAssets);
 
-    // Base allocation proportional to score
-    let allocations = selectedAssets.map((asset) => {
-      const scoreRatio = Math.max(asset.totalScore, 10) / totalScore;
-      return Math.round(scoreRatio * TOTAL_VALUE);
-    });
+    // If we have fewer than 8 assets, normalize to $100,000
+    if (numAssets < 8) {
+      const currentTotal = allocations.reduce((sum, a) => sum + a, 0);
+      const ratio = 100000 / currentTotal;
+      allocations = allocations.map((a) => Math.round(a * ratio));
 
-    // Apply constraints
-    allocations = allocations.map((a) => Math.max(MIN_ALLOC, Math.min(MAX_ALLOC, a)));
-
-    // Normalize to exactly $100,000
-    const currentTotal = allocations.reduce((sum, a) => sum + a, 0);
-    let diff = TOTAL_VALUE - currentTotal;
-
-    // Distribute difference to highest scored assets
-    if (diff !== 0) {
-      const sortedIndices = selectedAssets
-        .map((_, i) => i)
-        .sort((a, b) => selectedAssets[b].totalScore - selectedAssets[a].totalScore);
-
-      let iterations = 0;
-      while (Math.abs(diff) > 0 && iterations < 100) {
-        for (const idx of sortedIndices) {
-          if (Math.abs(diff) === 0) break;
-
-          const adjustment = diff > 0 ? Math.min(diff, 1000) : Math.max(diff, -1000);
-          const newAlloc = allocations[idx] + adjustment;
-
-          if (newAlloc >= MIN_ALLOC && newAlloc <= MAX_ALLOC) {
-            allocations[idx] = newAlloc;
-            diff -= adjustment;
-          }
-        }
-        iterations++;
+      // Fix any rounding errors
+      const diff = 100000 - allocations.reduce((sum, a) => sum + a, 0);
+      if (diff !== 0) {
+        allocations[0] += diff;
       }
     }
 

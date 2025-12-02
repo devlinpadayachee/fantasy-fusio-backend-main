@@ -2416,6 +2416,7 @@ const gameController = {
         strategy,
         totalAllocation: (result.allocations || []).reduce((sum, a) => sum + (a || 0), 0),
         note: "This is a preview - actual picks may vary when portfolio is created",
+        diagnostics: result.diagnostics || null, // Include full diagnostics
       });
     } catch (error) {
       console.error("[ADMIN] Marlow AI preview error:", error);
