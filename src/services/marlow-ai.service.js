@@ -760,33 +760,89 @@ Your picks:`;
 
   /**
    * Fallback to smart random if AI fails
+   * This mimics the original random selection behavior
    */
   async fallbackStrategy(gameType, numAssets) {
     console.log("🦍 Using smart random fallback strategy...");
 
-    const assets = await Asset.find({
-      type: gameType,
-      isActive: true,
-      ape: true,
-    });
+    try {
+      // First try with ape: true (preferred for Marlow games)
+      let assets = await Asset.find({
+        type: gameType,
+        isActive: true,
+        ape: true,
+      });
 
-    // Shuffle and pick
-    const shuffled = assets.sort(() => Math.random() - 0.5);
-    const selected = shuffled.slice(0, numAssets);
+      // If no ape assets, fall back to any active assets
+      if (assets.length < numAssets) {
+        console.warn(`🦍 Only ${assets.length} APE assets found, using all active ${gameType} assets`);
+        assets = await Asset.find({
+          type: gameType,
+          isActive: true,
+        });
+      }
 
-    // Use tiered allocations (larger positions in first picks)
-    const allocations = [20000, 17500, 15000, 12500, 12500, 10000, 7500, 5000];
+      if (assets.length === 0) {
+        throw new Error(`No active ${gameType} assets found for fallback!`);
+      }
 
-    return {
-      assets: selected.map((a) => ({
-        symbol: a.symbol,
-        assetId: a.assetId,
-        score: 50,
-        reasoning: ["Fallback: Random selection"],
-      })),
-      allocations: allocations.slice(0, numAssets),
-      strategy: { type: "Random Fallback" },
-    };
+      if (assets.length < numAssets) {
+        console.warn(`🦍 Only ${assets.length} assets available, using all of them`);
+      }
+
+      // Fisher-Yates shuffle for proper randomization
+      const shuffled = [...assets];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      // Select up to numAssets
+      const selected = shuffled.slice(0, Math.min(numAssets, shuffled.length));
+
+      // Standard tiered allocations (same as original implementation)
+      // Total = 100,000 when 8 assets
+      const baseAllocations = [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000];
+      let allocations = baseAllocations.slice(0, selected.length);
+
+      // Normalize to exactly $100,000 if we have fewer assets
+      const currentTotal = allocations.reduce((sum, a) => sum + a, 0);
+      if (currentTotal !== 100000) {
+        const ratio = 100000 / currentTotal;
+        allocations = allocations.map((a) => Math.round(a * ratio));
+        // Fix rounding errors
+        const diff = 100000 - allocations.reduce((sum, a) => sum + a, 0);
+        if (diff !== 0) {
+          allocations[0] += diff;
+        }
+      }
+
+      console.log(`🦍 Fallback selected ${selected.length} assets: ${selected.map((a) => a.symbol).join(", ")}`);
+
+      return {
+        assets: selected.map((a) => ({
+          symbol: a.symbol,
+          assetId: a.assetId,
+          score: 50,
+          reasoning: ["Fallback: Random selection"],
+        })),
+        allocations,
+        strategy: {
+          type: "Random Fallback",
+          confidence: "LOW",
+          marketRegime: "NEUTRAL",
+          fearGreedIndex: 50,
+          bullishPicks: 0,
+          valuePicks: 0,
+          highVolatility: 0,
+          positiveSentiment: 0,
+        },
+      };
+    } catch (error) {
+      console.error("🦍❌ Fallback strategy failed:", error.message);
+      // Ultimate fallback - throw to let caller handle
+      throw new Error(`Marlow fallback failed: ${error.message}`);
+    }
   }
 
   // ═══════════════════════════════════════════════

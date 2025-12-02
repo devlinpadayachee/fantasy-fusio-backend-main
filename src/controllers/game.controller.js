@@ -2384,18 +2384,36 @@ const gameController = {
       const result = await marlowAI.generateSmartPortfolio(gameType.toUpperCase(), 8);
       const elapsed = Date.now() - startTime;
 
+      // Safely map allocations with null checks
+      const allocations = (result.allocations || []).map((a, i) => {
+        const asset = result.assets?.[i];
+        return {
+          symbol: asset?.symbol || `Asset ${i + 1}`,
+          allocation: a || 0,
+          percentage: `${((a || 0) / 1000).toFixed(1)}%`,
+        };
+      });
+
+      // Ensure strategy has all required fields
+      const strategy = {
+        type: result.strategy?.type || "Unknown",
+        confidence: result.strategy?.confidence || "MEDIUM",
+        marketRegime: result.strategy?.marketRegime || "NEUTRAL",
+        fearGreedIndex: result.strategy?.fearGreedIndex || 50,
+        bullishPicks: result.strategy?.bullishPicks || 0,
+        valuePicks: result.strategy?.valuePicks || 0,
+        highVolatility: result.strategy?.highVolatility || 0,
+        positiveSentiment: result.strategy?.positiveSentiment || 0,
+      };
+
       res.json({
         success: true,
         gameType: gameType.toUpperCase(),
         analysisTime: `${elapsed}ms`,
-        picks: result.assets,
-        allocations: result.allocations.map((a, i) => ({
-          symbol: result.assets[i].symbol,
-          allocation: a,
-          percentage: `${(a / 1000).toFixed(1)}%`,
-        })),
-        strategy: result.strategy,
-        totalAllocation: result.allocations.reduce((sum, a) => sum + a, 0),
+        picks: result.assets || [],
+        allocations,
+        strategy,
+        totalAllocation: (result.allocations || []).reduce((sum, a) => sum + (a || 0), 0),
         note: "This is a preview - actual picks may vary when portfolio is created",
       });
     } catch (error) {
