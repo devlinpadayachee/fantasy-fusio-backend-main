@@ -3,6 +3,7 @@ const gameService = require("../services/game.service");
 const priceService = require("../services/price.service");
 const blockchainService = require("../services/blockchain.service");
 const transactionService = require("../services/transaction.service");
+const discordService = require("../services/discord.service");
 const Game = require("../models/Game");
 const Notification = require("../models/Notification");
 const Transaction = require("../models/Transaction");
@@ -209,14 +210,28 @@ exports.initializeCronJobs = () => {
               isApe: true,
             });
 
+            let marlowAiResult = null;
+            let marlowPortfolio = null;
+
             if (!existingApePortfolio && game.winCondition?.type === "MARLOW_BANES") {
               console.log(`[CRON] Generating APE portfolio for game ${game.gameId}`);
-              const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
-              game.apePortfolio = { portfolioId: apePortfolioId };
+              const result = await gameService.generateApePortfolio(game.gameId, game.gameType);
+              game.apePortfolio = { portfolioId: result.portfolioId };
               await game.save();
-              console.log(`[CRON] ✓ APE portfolio ${apePortfolioId} created for game ${game.gameId}`);
+              marlowAiResult = result.aiResult;
+              marlowPortfolio = await Portfolio.findOne({ portfolioId: result.portfolioId });
+              console.log(`[CRON] ✓ APE portfolio ${result.portfolioId} created for game ${game.gameId}`);
             } else if (existingApePortfolio) {
               console.log(`[CRON] Ape portfolio already exists for game ${game.gameId}, skipping generation`);
+              marlowPortfolio = existingApePortfolio;
+              // Reconstruct AI result from stored metadata for Discord
+              if (existingApePortfolio.metadata?.aiStrategy) {
+                marlowAiResult = {
+                  assets: existingApePortfolio.metadata.assetReasons || [],
+                  allocations: existingApePortfolio.assets.map((a) => a.allocation),
+                  strategy: existingApePortfolio.metadata.aiStrategy,
+                };
+              }
             }
 
             if (game.winCondition?.type === "MARLOW_BANES" && (!game.apePortfolio || !game.apePortfolio.portfolioId)) {
@@ -228,6 +243,20 @@ exports.initializeCronJobs = () => {
             game.status = "ACTIVE";
             await game.save();
             console.log(`[CRON] ✓ Game ${game.gameId} transitioned to ACTIVE`);
+
+            // 🎮 Post Marlow's picks to Discord after portfolios are locked
+            if (marlowAiResult && marlowPortfolio) {
+              try {
+                await discordService.postMarlowPicks(game, marlowPortfolio, marlowAiResult);
+                console.log(`[CRON] 🎮 Marlow picks posted to Discord for game ${game.gameId}`);
+              } catch (discordError) {
+                console.warn(`[CRON] Discord notification failed (non-blocking):`, discordError.message);
+              }
+            }
+
+            // Also post game started notification
+            const participantCount = await Portfolio.countDocuments({ gameId: game.gameId, isApe: false });
+            await discordService.postGameStarted(game, participantCount);
           } catch (error) {
             console.error(`[CRON] ✗ Error activating game ${game.gameId}:`, error.message);
           }
@@ -256,13 +285,17 @@ exports.initializeCronJobs = () => {
         const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
         const stuckGames = await Game.find({
           status: { $in: ["UPDATE_VALUES", "CALCULATING_WINNERS"] },
-          updatedAt: { $lte: fiveMinutesAgo }
+          updatedAt: { $lte: fiveMinutesAgo },
         });
 
         if (stuckGames.length > 0) {
           console.warn(`[CRON] ⚠ Found ${stuckGames.length} games stuck in processing states`);
           for (const game of stuckGames) {
-            console.warn(`[CRON] Stuck game: ${game.gameId} (${game.status}) - last updated ${Math.round((now - game.updatedAt) / 1000 / 60)} min ago`);
+            console.warn(
+              `[CRON] Stuck game: ${game.gameId} (${game.status}) - last updated ${Math.round(
+                (now - game.updatedAt) / 1000 / 60
+              )} min ago`
+            );
           }
         }
       } catch (error) {

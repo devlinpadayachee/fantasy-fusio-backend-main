@@ -126,6 +126,23 @@ const portfolioSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Marlow AI metadata - stores AI reasoning and strategy
+    metadata: {
+      aiStrategy: {
+        type: { type: String },
+        bullishPicks: Number,
+        valuePicks: Number,
+        highVolatility: Number,
+      },
+      assetReasons: [
+        {
+          symbol: String,
+          score: Number,
+          reasoning: [String],
+        },
+      ],
+      generatedAt: Date,
+    },
   },
   {
     timestamps: true,

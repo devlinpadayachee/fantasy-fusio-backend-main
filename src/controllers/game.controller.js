@@ -320,16 +320,16 @@ const gameController = {
           } else {
             // Generate new APE portfolio
             console.log(`[FIX] Generating APE portfolio for game ${game.gameId} (${game.gameType})`);
-            const apePortfolioId = await gameService.generateApePortfolio(game.gameId, game.gameType);
-            game.apePortfolio = { portfolioId: apePortfolioId };
+            const result = await gameService.generateApePortfolio(game.gameId, game.gameType);
+            game.apePortfolio = { portfolioId: result.portfolioId };
             await game.save();
             results.apePortfoliosGenerated.push({
               gameId: game.gameId,
               name: game.name,
-              portfolioId: apePortfolioId,
+              portfolioId: result.portfolioId,
               action: "generated_new",
             });
-            console.log(`[FIX] Generated APE portfolio ${apePortfolioId} for game ${game.gameId}`);
+            console.log(`[FIX] Generated APE portfolio ${result.portfolioId} for game ${game.gameId}`);
           }
         } catch (error) {
           console.error(`[FIX] Failed to generate APE portfolio for game ${game.gameId}:`, error.message);
@@ -1918,9 +1918,8 @@ const gameController = {
         summary: stats,
         issues: issues,
         healthy: issues.length === 0,
-        message: issues.length === 0
-          ? "✅ All Marlow games are healthy"
-          : `⚠️ Found ${issues.length} games with issues`,
+        message:
+          issues.length === 0 ? "✅ All Marlow games are healthy" : `⚠️ Found ${issues.length} games with issues`,
       });
     } catch (error) {
       console.error("Error in Marlow health check:", error);
@@ -2362,6 +2361,197 @@ const gameController = {
       });
     } catch (error) {
       console.error("Error getting all games reward summary:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Preview Marlow AI Picks - See what Marlow would pick for a game type
+   * GET /api/game/admin/marlow-ai/preview/:gameType
+   */
+  previewMarlowAI: asyncHandler(async (req, res) => {
+    const marlowAI = require("../services/marlow-ai.service");
+    const { gameType } = req.params;
+
+    try {
+      if (!["CRYPTO", "DEFI", "TRADFI"].includes(gameType.toUpperCase())) {
+        return res.status(400).json({ error: "Invalid game type. Use CRYPTO, DEFI, or TRADFI" });
+      }
+
+      console.log(`[ADMIN] Marlow AI preview requested for ${gameType}`);
+
+      const startTime = Date.now();
+      const result = await marlowAI.generateSmartPortfolio(gameType.toUpperCase(), 8);
+      const elapsed = Date.now() - startTime;
+
+      res.json({
+        success: true,
+        gameType: gameType.toUpperCase(),
+        analysisTime: `${elapsed}ms`,
+        picks: result.assets,
+        allocations: result.allocations.map((a, i) => ({
+          symbol: result.assets[i].symbol,
+          allocation: a,
+          percentage: `${(a / 1000).toFixed(1)}%`,
+        })),
+        strategy: result.strategy,
+        totalAllocation: result.allocations.reduce((sum, a) => sum + a, 0),
+        note: "This is a preview - actual picks may vary when portfolio is created",
+      });
+    } catch (error) {
+      console.error("[ADMIN] Marlow AI preview error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Get Marlow Portfolio Details - View AI reasoning for existing Marlow portfolio
+   * GET /api/game/admin/marlow-ai/portfolio/:gameId
+   */
+  getMarlowPortfolioAnalysis: asyncHandler(async (req, res) => {
+    const { gameId } = req.params;
+
+    try {
+      const game = await Game.findOne({ gameId: parseInt(gameId) });
+      if (!game) {
+        return res.status(404).json({ error: "Game not found" });
+      }
+
+      if (!game.apePortfolio?.portfolioId) {
+        return res.status(404).json({ error: "No Marlow portfolio found for this game" });
+      }
+
+      const portfolio = await Portfolio.findOne({
+        portfolioId: game.apePortfolio.portfolioId,
+        isApe: true,
+      });
+
+      if (!portfolio) {
+        return res.status(404).json({ error: "Marlow portfolio not found in database" });
+      }
+
+      res.json({
+        success: true,
+        gameId: parseInt(gameId),
+        gameName: game.name,
+        gameType: game.gameType,
+        gameStatus: game.status,
+        portfolio: {
+          portfolioId: portfolio.portfolioId,
+          portfolioName: portfolio.portfolioName,
+          status: portfolio.status,
+          isLocked: portfolio.isLocked,
+          initialValue: portfolio.initialValue,
+          currentValue: portfolio.currentValue,
+          performancePercentage: portfolio.performancePercentage,
+          assets: portfolio.assets.map((a) => ({
+            symbol: a.symbol,
+            allocation: a.allocation,
+            percentage: `${(a.allocation / 1000).toFixed(1)}%`,
+            tokenQty: a.tokenQty,
+          })),
+        },
+        aiMetadata: portfolio.metadata || {
+          note: "AI metadata not available - portfolio may have been created before AI enhancement",
+        },
+        gameOutcome: portfolio.gameOutcome,
+        createdAt: portfolio.createdAt,
+      });
+    } catch (error) {
+      console.error("[ADMIN] Marlow portfolio analysis error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }),
+
+  /**
+   * Get Marlow AI Performance Stats - Track how well Marlow is doing
+   * GET /api/game/admin/marlow-ai/stats
+   */
+  getMarlowAIStats: asyncHandler(async (req, res) => {
+    try {
+      // Get all completed games with Marlow
+      const completedGames = await Game.find({
+        status: "COMPLETED",
+        "winCondition.type": "MARLOW_BANES",
+        "apePortfolio.portfolioId": { $exists: true },
+      })
+        .sort({ endTime: -1 })
+        .limit(100);
+
+      // Get all Marlow portfolios
+      const marlowPortfolios = await Portfolio.find({
+        isApe: true,
+        gameId: { $in: completedGames.map((g) => g.gameId) },
+      });
+
+      // Calculate stats
+      const wins = marlowPortfolios.filter((p) => p.gameOutcome?.isWinner).length;
+      const losses = marlowPortfolios.filter((p) => p.status === "LOST").length;
+      const total = wins + losses;
+
+      const avgPerformance =
+        marlowPortfolios.length > 0
+          ? marlowPortfolios.reduce((sum, p) => sum + (p.performancePercentage || 0), 0) / marlowPortfolios.length
+          : 0;
+
+      // Best and worst performances
+      const sortedByPerf = [...marlowPortfolios].sort(
+        (a, b) => (b.performancePercentage || 0) - (a.performancePercentage || 0)
+      );
+
+      const bestGame = sortedByPerf[0];
+      const worstGame = sortedByPerf[sortedByPerf.length - 1];
+
+      // Recent performance trend (last 10 games)
+      const recentPortfolios = marlowPortfolios.slice(0, 10);
+      const recentWins = recentPortfolios.filter((p) => p.gameOutcome?.isWinner).length;
+      const recentAvgPerf =
+        recentPortfolios.length > 0
+          ? recentPortfolios.reduce((sum, p) => sum + (p.performancePercentage || 0), 0) / recentPortfolios.length
+          : 0;
+
+      // Strategy breakdown
+      const strategiesUsed = {};
+      for (const p of marlowPortfolios) {
+        const strategy = p.metadata?.aiStrategy?.type || "Legacy/Random";
+        strategiesUsed[strategy] = (strategiesUsed[strategy] || 0) + 1;
+      }
+
+      res.json({
+        success: true,
+        overallStats: {
+          totalGames: total,
+          wins: wins,
+          losses: losses,
+          winRate: total > 0 ? `${((wins / total) * 100).toFixed(1)}%` : "N/A",
+          avgPerformance: `${avgPerformance.toFixed(2)}%`,
+        },
+        recentPerformance: {
+          gamesAnalyzed: recentPortfolios.length,
+          wins: recentWins,
+          losses: recentPortfolios.length - recentWins,
+          winRate:
+            recentPortfolios.length > 0 ? `${((recentWins / recentPortfolios.length) * 100).toFixed(1)}%` : "N/A",
+          avgPerformance: `${recentAvgPerf.toFixed(2)}%`,
+        },
+        bestPerformance: bestGame
+          ? {
+              gameId: bestGame.gameId,
+              performance: `${(bestGame.performancePercentage || 0).toFixed(2)}%`,
+              won: bestGame.gameOutcome?.isWinner,
+            }
+          : null,
+        worstPerformance: worstGame
+          ? {
+              gameId: worstGame.gameId,
+              performance: `${(worstGame.performancePercentage || 0).toFixed(2)}%`,
+              won: worstGame.gameOutcome?.isWinner,
+            }
+          : null,
+        strategiesUsed: strategiesUsed,
+      });
+    } catch (error) {
+      console.error("[ADMIN] Marlow AI stats error:", error);
       res.status(500).json({ error: error.message });
     }
   }),

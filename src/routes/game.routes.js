@@ -29,6 +29,11 @@ router.get("/admin/reward-status/:gameId", isAdmin, gameController.getGameReward
 router.post("/admin/process-rewards/:gameId", isAdmin, gameController.processRemainingRewards);
 router.get("/admin/all-rewards-summary", isAdmin, gameController.getAllGamesRewardSummary);
 
+// Marlow AI Routes
+router.get("/admin/marlow-ai/preview/:gameType", isAdmin, gameController.previewMarlowAI);
+router.get("/admin/marlow-ai/portfolio/:gameId", isAdmin, gameController.getMarlowPortfolioAnalysis);
+router.get("/admin/marlow-ai/stats", isAdmin, gameController.getMarlowAIStats);
+
 // Separated stats endpoints
 router.get("/stats/community", gameController.getCommunityStats);
 router.get("/stats/leaderboard", gameController.getGlobalLeaderboard);

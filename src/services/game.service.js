@@ -10,87 +10,7 @@ const { ethers } = require("ethers");
 class GameService {
   constructor() {}
 
-  // Initialize a new game
-  async initializeGame(gameType = "DEFI") {
-    try {
-      // Check if there's already an active game
-      const activeGame = await Game.getNotCompletedGame(gameType);
-      if (activeGame) {
-        console.error("A game is already active or Pending");
-        return;
-      }
-
-      let startTime, endTime;
-      startTime = new Date(Date.now() + 1 * 60 * 1000);
-      if (gameType === "DEFI") {
-        endTime = new Date(startTime.getTime() + 24 * 60 * 60 * 1000);
-      } else {
-        endTime = new Date(startTime.getTime() + 48 * 60 * 60 * 1000);
-      }
-
-      const game = await Game.create({
-        gameId: Date.now(),
-        gameType,
-        status: "PENDING",
-        startTime,
-        endTime,
-        totalPrizePool: 0,
-        participantCount: 0,
-      });
-
-      let gameId;
-      // Create game on blockchain
-      try {
-        const blockchainResult = await blockchainService.createGame(
-          game.gameId,
-          startTime,
-          endTime,
-          game.entryPrice || 0
-        );
-
-        // Update game with blockchain details
-        gameId = blockchainResult.gameId;
-        game.gameId = gameId;
-        game.transactionHash = blockchainResult.transactionHash;
-        game.status = "PENDING";
-        await game.save();
-
-        // Check if Ape portfolio already exists for this game
-        const existingApePortfolio = await Portfolio.findOne({
-          gameId: gameId,
-          isApe: true,
-        });
-
-        if (!existingApePortfolio) {
-          // Generate Ape's portfolio and update game
-          const apePortfolioId = await this.generateApePortfolio(gameId, gameType);
-          game.apePortfolio = { portfolioId: apePortfolioId };
-          await game.save();
-        } else {
-          console.log(`Ape portfolio already exists for game ${gameId}, skipping generation`);
-          game.apePortfolio = { portfolioId: existingApePortfolio.portfolioId };
-          await game.save();
-        }
-      } catch (error) {
-        // Update game status to FAILED and store error
-        game.status = "FAILED";
-        game.error = error.message;
-        if (error.transactionHash) {
-          game.transactionHash = error.transactionHash;
-        }
-        await game.save();
-        throw error;
-      }
-
-      console.log(`Game ${game.gameId} initialized successfully`);
-      return game;
-    } catch (error) {
-      console.error("Error initializing game:", error);
-      throw error;
-    }
-  }
-
-  // New method to get games by status (supports array of statuses)
+  // Get games by status (supports array of statuses)
   async getGamesByStatus(status) {
     try {
       const query = Array.isArray(status) ? { status: { $in: status } } : { status: status };
@@ -157,20 +77,13 @@ class GameService {
     }
   }
 
-  // Generate Ape's portfolio (database-only, no blockchain registration needed)
+  // Generate Ape's portfolio using AI-powered market analysis
   // The APE is a system opponent that doesn't pay entry fees or compete for prize pool
+  // Returns { portfolioId, aiResult } for Discord notification
   async generateApePortfolio(gameId, gameType) {
+    const marlowAI = require("./marlow-ai.service");
+
     try {
-      const assets = await Asset.find({
-        type: gameType,
-        isActive: true,
-        ape: true,
-      });
-
-      if (assets.length < 8) {
-        throw new Error(`Not enough active ${gameType} assets available`);
-      }
-
       // Get the APE user (Marlow Banes system account)
       const apeUser = await User.findById(process.env.APE_USER_ID);
       if (!apeUser) {
@@ -186,44 +99,52 @@ class GameService {
         console.log(
           `🦍 Marlow Banes portfolio already exists for game ${gameId}: portfolioId=${existingApePortfolio.portfolioId}`
         );
-        return existingApePortfolio.portfolioId;
+        // Return existing portfolio with stored AI metadata
+        return {
+          portfolioId: existingApePortfolio.portfolioId,
+          aiResult: existingApePortfolio.metadata || null,
+          isExisting: true,
+        };
       }
 
-      // Randomly select 8 unique assets
-      const selectedAssets = this.getRandomAssets(assets, 8);
-      const formattedAssets = selectedAssets.map((asset) => asset.symbol);
+      // 🧠 USE MARLOW AI TO GENERATE SMART PORTFOLIO
+      console.log(`🦍🧠 Marlow AI generating portfolio for game ${gameId} (${gameType})...`);
+      const aiPicks = await marlowAI.generateSmartPortfolio(gameType, 8);
+
+      const INITIAL_VALUE = 100000; // $100,000 initial portfolio value
+
+      // Map AI picks to portfolio assets
+      const portfolioAssets = aiPicks.assets.map((asset, index) => ({
+        assetId: asset.assetId,
+        symbol: asset.symbol,
+        allocation: aiPicks.allocations[index],
+        tokenQty: 0, // Will be calculated in lockPortfolios based on price at lock time
+      }));
 
       // Verify uniqueness
-      const uniqueAssets = new Set(formattedAssets);
-      if (uniqueAssets.size !== formattedAssets.length) {
-        throw new Error("Selected assets must be unique");
+      const uniqueSymbols = new Set(portfolioAssets.map((a) => a.symbol));
+      if (uniqueSymbols.size !== portfolioAssets.length) {
+        throw new Error("Marlow AI selected duplicate assets");
       }
 
-      // Allocation values represent dollar amounts (20000 = $20,000 = 20% of $100,000 initial)
-      // Total allocations must sum to initialValue ($100,000)
-      const allocations = [20000, 20000, 15000, 15000, 10000, 10000, 5000, 5000];
-      const INITIAL_VALUE = 100000; // $100,000 initial portfolio value (matches regular portfolios)
-
-      // Map assets to allocations (tokenQty will be calculated when portfolio is locked)
-      const portfolioAssets = formattedAssets.map((symbol, index) => {
-        const dbAsset = selectedAssets.find((a) => a.symbol === symbol);
-
-        return {
-          assetId: dbAsset.assetId,
-          symbol: symbol,
-          allocation: allocations[index],
-          tokenQty: 0, // Will be calculated in lockPortfolios based on price at lock time
-        };
-      });
+      // Verify allocations sum to initial value
+      const totalAllocation = aiPicks.allocations.reduce((sum, a) => sum + a, 0);
+      if (Math.abs(totalAllocation - INITIAL_VALUE) > 100) {
+        console.warn(`⚠️ Marlow AI allocations sum to ${totalAllocation}, adjusting...`);
+        // Normalize allocations
+        const ratio = INITIAL_VALUE / totalAllocation;
+        portfolioAssets.forEach((asset, i) => {
+          asset.allocation = Math.round(aiPicks.allocations[i] * ratio);
+        });
+      }
 
       // Generate a unique portfolio ID for APE (prefix with 9 to distinguish from regular portfolios)
-      // Format: 9GGGGTTTTTTTT where GGGG = gameId (4 digits), TTTTTTTT = timestamp portion
       const portfolioId = parseInt(`9${String(gameId).padStart(4, "0")}${Date.now().toString().slice(-8)}`);
 
-      console.log(`🦍 Creating Marlow Banes portfolio (database-only): portfolioId=${portfolioId}`);
+      console.log(`🦍 Creating Marlow Banes AI portfolio: portfolioId=${portfolioId}`);
+      console.log(`🦍 Strategy: ${aiPicks.strategy?.type || "Adaptive"}`);
 
       // Create portfolio in database only - no blockchain registration needed
-      // APE doesn't pay entry fees or compete for prize pool
       const portfolio = new Portfolio({
         userId: apeUser._id,
         portfolioName: "MARLOW BANES",
@@ -236,14 +157,25 @@ class GameService {
         isApe: true,
         initialValue: INITIAL_VALUE,
         currentValue: INITIAL_VALUE,
+        // Store AI reasoning for transparency/debugging
+        metadata: {
+          aiStrategy: aiPicks.strategy,
+          assetReasons: aiPicks.assets.map((a) => ({ symbol: a.symbol, score: a.score, reasoning: a.reasoning })),
+          generatedAt: new Date(),
+        },
       });
       await portfolio.save();
 
-      console.log(`🦍 Marlow Banes portfolio created successfully for game ${gameId}`);
+      console.log(`🦍✅ Marlow Banes AI portfolio created for game ${gameId}`);
 
-      return portfolioId;
+      // Return both portfolioId and AI result for Discord notification
+      return {
+        portfolioId,
+        aiResult: aiPicks,
+        isExisting: false,
+      };
     } catch (error) {
-      console.error("Error generating Ape portfolio:", error);
+      console.error("Error generating Marlow AI portfolio:", error);
       throw error;
     }
   }

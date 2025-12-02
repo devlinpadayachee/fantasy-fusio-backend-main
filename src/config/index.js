@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 
 const config = {
   // Node environment
@@ -10,8 +10,7 @@ const config = {
 
   // MongoDB configuration
   mongodb: {
-    uri:
-      process.env.MONGODB_URI,
+    uri: process.env.MONGODB_URI,
     options: {
       useNewUrlParser: true,
       useUnifiedTopology: true,
@@ -34,9 +33,7 @@ const config = {
 
   // Blockchain configuration
   blockchain: {
-    rpcUrl:
-      process.env.BLOCKCHAIN_RPC_URL ||
-      "https://data-seed-prebsc-1-s1.binance.org:8545/",
+    rpcUrl: process.env.BLOCKCHAIN_RPC_URL || "https://data-seed-prebsc-1-s1.binance.org:8545/",
     chainId: parseInt(process.env.CHAIN_ID || "56"), // BSC Testnet
     contractAddress: process.env.CONTRACT_ADDRESS,
     usdcAddress: process.env.USDC_ADDRESS,
@@ -45,16 +42,23 @@ const config = {
     gasPrice: process.env.GAS_PRICE || "auto",
     confirmations: parseInt(process.env.CONFIRMATIONS || "1"),
     timeoutBlocks: parseInt(process.env.TIMEOUT_BLOCKS || "50"),
-    networkPollingInterval: parseInt(
-      process.env.NETWORK_POLLING_INTERVAL || "4000"
-    ),
+    networkPollingInterval: parseInt(process.env.NETWORK_POLLING_INTERVAL || "4000"),
   },
 
   // API Keys
   apiKeys: {
     cryptoCompare: process.env.CRYPTOCOMPARE_API_KEY,
     alphaVantage: process.env.ALPHAVANTAGE_API_KEY,
-    moralis: process.env.MORALIS_API_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImJiOWNjYmJlLTU0ZGMtNGRiZi04M2JhLWZjOWJjOTE0OWQ5YyIsIm9yZ0lkIjoiOTAyOTciLCJ1c2VySWQiOiI4OTkzOSIsInR5cGVJZCI6IjE5NTJjMWVlLWY0MjAtNGFiMS05MzFmLWViZGVmNzRiZDk1YiIsInR5cGUiOiJQUk9KRUNUIiwiaWF0IjoxNzQyNDkxODg0LCJleHAiOjQ4OTgyNTE4ODR9.pHHIp6iXSyPBHTgRUk9aOgA7kOqQ4ahY_zzpqvPYoHI",
+    moralis:
+      process.env.MORALIS_API_KEY ||
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImJiOWNjYmJlLTU0ZGMtNGRiZi04M2JhLWZjOWJjOTE0OWQ5YyIsIm9yZ0lkIjoiOTAyOTciLCJ1c2VySWQiOiI4OTkzOSIsInR5cGVJZCI6IjE5NTJjMWVlLWY0MjAtNGFiMS05MzFmLWViZGVmNzRiZDk1YiIsInR5cGUiOiJQUk9KRUNUIiwiaWF0IjoxNzQyNDkxODg0LCJleHAiOjQ4OTgyNTE4ODR9.pHHIp6iXSyPBHTgRUk9aOgA7kOqQ4ahY_zzpqvPYoHI",
+    openai: process.env.OPENAI_API_KEY, // Optional - enables GPT-powered Marlow AI
+  },
+
+  // Discord Webhooks
+  discord: {
+    marlowWebhook: process.env.DISCORD_MARLOW_WEBHOOK_URL, // Webhook for Marlow AI announcements
+    enabled: !!process.env.DISCORD_MARLOW_WEBHOOK_URL,
   },
 
   // CORS configuration
@@ -132,44 +136,44 @@ const config = {
 };
 
 // Environment-specific configurations
-if (config.nodeEnv === 'development') {
-    // Add development-specific configurations here
-    config.mongodb.options.maxPoolSize = 50;
-    config.mongodb.options.minPoolSize = 10;
+if (config.nodeEnv === "development") {
+  // Add development-specific configurations here
+  config.mongodb.options.maxPoolSize = 50;
+  config.mongodb.options.minPoolSize = 10;
 }
 
 // Validation
 const requiredEnvVars = [
-    'MONGODB_URI',
-    'CONTRACT_ADDRESS',
-    'USDC_ADDRESS',
-    'ADMIN_PRIVATE_KEY',
-    'CRYPTOCOMPARE_API_KEY',
-    'ALPHAVANTAGE_API_KEY',
-    'JWT_SECRET',
-    'AWS_ACCESS_KEY_ID',
-    'AWS_SECRET_ACCESS_KEY',
-    'AWS_REGION',
-    'AWS_S3_BUCKET'
+  "MONGODB_URI",
+  "CONTRACT_ADDRESS",
+  "USDC_ADDRESS",
+  "ADMIN_PRIVATE_KEY",
+  "CRYPTOCOMPARE_API_KEY",
+  "ALPHAVANTAGE_API_KEY",
+  "JWT_SECRET",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_REGION",
+  "AWS_S3_BUCKET",
 ];
 
-const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
 if (missingEnvVars.length > 0) {
-    throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+  throw new Error(`Missing required environment variables: ${missingEnvVars.join(", ")}`);
 }
 
 // Validate blockchain configuration
 if (!config.blockchain.contractAddress || !config.blockchain.usdcAddress) {
-    throw new Error('Invalid blockchain configuration: Missing contract addresses');
+  throw new Error("Invalid blockchain configuration: Missing contract addresses");
 }
 
 if (!config.blockchain.privateKey) {
-    throw new Error('Invalid blockchain configuration: Missing admin private key');
+  throw new Error("Invalid blockchain configuration: Missing admin private key");
 }
 
 // Validate API keys
 if (!config.apiKeys.cryptoCompare || !config.apiKeys.alphaVantage) {
-    throw new Error('Invalid API configuration: Missing API keys');
+  throw new Error("Invalid API configuration: Missing API keys");
 }
 
 module.exports = config;
