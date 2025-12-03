@@ -22,12 +22,12 @@ class MarlowAIService {
   constructor() {
     // Strategy weights - can be adjusted based on market conditions
     this.strategies = {
-      MOMENTUM: 0.25, // Ride trends
-      MEAN_REVERSION: 0.2, // Buy oversold
-      VOLATILITY: 0.15, // Risk-adjusted
+      MOMENTUM: 0.3, // Ride trends - INCREASED (momentum wins games)
+      MEAN_REVERSION: 0.15, // Buy oversold - but not falling knives
+      VOLATILITY: 0.2, // Risk-adjusted - we WANT volatility for gains
       VOLUME: 0.15, // Follow smart money
       SENTIMENT: 0.15, // News & social sentiment
-      DIVERSIFICATION: 0.1, // Sector balance
+      DIVERSIFICATION: 0.05, // Less important - we want winners, not diversity
     };
 
     // Market regime thresholds
@@ -35,6 +35,36 @@ class MarlowAIService {
       BULL: { fearGreed: 60, btcChange7d: 5 },
       BEAR: { fearGreed: 40, btcChange7d: -5 },
     };
+
+    // CRITICAL: Stablecoins NEVER make gains - exclude them always!
+    this.STABLECOINS = [
+      "USDT",
+      "USDC",
+      "USDS",
+      "DAI",
+      "BUSD",
+      "TUSD",
+      "USDP",
+      "GUSD",
+      "FRAX",
+      "LUSD",
+      "sUSD",
+      "USDD",
+      "FDUSD",
+      "PYUSD",
+      "cUSD",
+      "UST",
+      "EURC",
+      "EURS",
+      "EURT",
+      "XSGD",
+      "BIDR",
+      "TRYB",
+      "BRZ",
+    ];
+
+    // Minimum score threshold - don't pick garbage
+    this.MIN_SCORE_THRESHOLD = 55;
 
     this.openaiEnabled = !!config.apiKeys.openai;
     if (this.openaiEnabled) {
@@ -65,13 +95,19 @@ class MarlowAIService {
     const startTotal = Date.now();
 
     try {
-      // 1. Get all eligible assets
+      // 1. Get all eligible assets (EXCLUDING STABLECOINS!)
       const stepStart1 = Date.now();
-      const assets = await Asset.find({
+      let assets = await Asset.find({
         type: gameType,
         isActive: true,
         ape: true,
       });
+
+      // CRITICAL: Filter out stablecoins - they CAN'T make gains!
+      const originalCount = assets.length;
+      assets = assets.filter((a) => !this.STABLECOINS.includes(a.symbol.toUpperCase()));
+      const excludedStablecoins = originalCount - assets.length;
+
       diagnostics.timing.assetQuery = Date.now() - stepStart1;
       diagnostics.steps.push({
         step: 1,
@@ -80,13 +116,21 @@ class MarlowAIService {
         duration: diagnostics.timing.assetQuery,
         details: {
           query: { type: gameType, isActive: true, ape: true },
-          assetsFound: assets.length,
+          assetsFound: originalCount,
+          stablecoinsExcluded: excludedStablecoins,
+          eligibleAssets: assets.length,
           assetSymbols: assets.map((a) => a.symbol),
+          excludedSymbols:
+            excludedStablecoins > 0
+              ? this.STABLECOINS.filter((s) => assets.findIndex((a) => a.symbol.toUpperCase() === s) === -1).slice(0, 5)
+              : [],
         },
       });
 
       if (assets.length < numAssets) {
-        throw new Error(`Not enough active ${gameType} assets available (found ${assets.length}, need ${numAssets})`);
+        throw new Error(
+          `Not enough active ${gameType} assets available (found ${assets.length}, need ${numAssets}). Stablecoins excluded: ${excludedStablecoins}`
+        );
       }
 
       // 2. Get market regime (bull/bear/neutral)
@@ -930,115 +974,241 @@ Your picks:`;
   }
 
   /**
-   * Score each asset using multiple strategies
+   * Score each asset using multiple strategies - AGGRESSIVE VERSION
+   * Marlow needs to WIN, not be "balanced" or "safe"
    */
   scoreAssets(assetData, marketRegime = {}) {
     return assetData.map((asset) => {
       const md = asset.marketData;
       const scores = {};
       const reasoning = [];
+      let disqualified = false;
+      let disqualifyReason = "";
 
-      // 1. MOMENTUM SCORE (0-100)
-      // Positive price momentum = good (weighted by recency)
-      const momentumRaw = md.priceChange24h * 0.2 + md.priceChange7d * 0.5 + md.priceChange14d * 0.3;
-      scores.momentum = this.normalizeScore(momentumRaw, -30, 30);
+      // ═══════════════════════════════════════════════════════════════════
+      // HARD DISQUALIFIERS - These assets should NEVER be picked
+      // ═══════════════════════════════════════════════════════════════════
 
-      if (md.priceChange7d > 10) {
+      // Check if it's a stablecoin (double-check in case it slipped through)
+      if (this.STABLECOINS.includes(asset.symbol?.toUpperCase())) {
+        disqualified = true;
+        disqualifyReason = "Stablecoin - can't make gains";
+      }
+
+      // Extremely overbought - about to dump
+      if (md.rsi > 80) {
+        disqualified = true;
+        disqualifyReason = `Extremely overbought (RSI: ${md.rsi.toFixed(0)}) - dump imminent`;
+      }
+
+      // Near-zero volatility = likely stablecoin or dead asset
+      if (md.volatility < 1) {
+        disqualified = true;
+        disqualifyReason = `No volatility (${md.volatility.toFixed(2)}%) - dead asset or stablecoin`;
+      }
+
+      // If disqualified, return minimal score
+      if (disqualified) {
+        return {
+          ...asset,
+          scores: { momentum: 0, meanReversion: 0, volatility: 0, volume: 0, sentiment: 0 },
+          totalScore: 0,
+          reasoning: [`❌ DISQUALIFIED: ${disqualifyReason}`],
+          disqualified: true,
+        };
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // 1. MOMENTUM SCORE (0-100) - MOST IMPORTANT FOR WINNING
+      // We want assets that are GOING UP, not "might go up"
+      // ═══════════════════════════════════════════════════════════════════
+
+      // Recent momentum weighted heavily
+      const momentumRaw = md.priceChange24h * 0.3 + md.priceChange7d * 0.5 + md.priceChange14d * 0.2;
+      scores.momentum = this.normalizeScore(momentumRaw, -20, 40); // Biased toward positive
+
+      // Strong momentum = BIG bonus
+      if (md.priceChange7d > 20) {
+        scores.momentum = Math.min(100, scores.momentum + 30);
+        reasoning.push(`🚀🚀 EXPLOSIVE momentum (+${md.priceChange7d.toFixed(1)}%)`);
+      } else if (md.priceChange7d > 10) {
+        scores.momentum = Math.min(100, scores.momentum + 20);
         reasoning.push(`🚀 Strong momentum (+${md.priceChange7d.toFixed(1)}%)`);
       } else if (md.priceChange7d > 5) {
+        scores.momentum = Math.min(100, scores.momentum + 10);
         reasoning.push(`📈 Good momentum (+${md.priceChange7d.toFixed(1)}%)`);
+      } else if (md.priceChange7d < -15) {
+        // Falling knife - HEAVY penalty
+        scores.momentum = Math.max(0, scores.momentum - 40);
+        reasoning.push(`🔪 Falling knife (${md.priceChange7d.toFixed(1)}%) - AVOID`);
       } else if (md.priceChange7d < -10) {
+        scores.momentum = Math.max(0, scores.momentum - 25);
         reasoning.push(`📉 Weak momentum (${md.priceChange7d.toFixed(1)}%)`);
+      } else if (md.priceChange7d < -5) {
+        scores.momentum = Math.max(0, scores.momentum - 15);
+        reasoning.push(`📉 Declining (${md.priceChange7d.toFixed(1)}%)`);
       }
 
-      // 2. MEAN REVERSION SCORE (0-100)
-      // Oversold (low RSI) = potential bounce
-      const oversoldBonus = md.rsi < 25 ? 40 : md.rsi < 30 ? 30 : md.rsi < 40 ? 15 : 0;
-      const overboughtPenalty = md.rsi > 75 ? -25 : md.rsi > 70 ? -15 : md.rsi > 65 ? -5 : 0;
-      scores.meanReversion = Math.max(0, Math.min(100, 50 + oversoldBonus + overboughtPenalty + (50 - md.rsi) * 0.6));
+      // ═══════════════════════════════════════════════════════════════════
+      // 2. RSI/MEAN REVERSION SCORE (0-100)
+      // Oversold with momentum = GREAT
+      // Overbought = DANGER (will dump)
+      // ═══════════════════════════════════════════════════════════════════
 
-      if (md.rsi < 30) {
-        reasoning.push(`💎 Deeply oversold (RSI: ${md.rsi.toFixed(0)})`);
-      } else if (md.rsi < 40) {
-        reasoning.push(`📊 Oversold (RSI: ${md.rsi.toFixed(0)})`);
+      // Start at 50, adjust based on RSI
+      let rsiScore = 50;
+
+      // Deeply oversold with positive momentum = GOLDEN opportunity
+      if (md.rsi < 30 && md.priceChange7d > 0) {
+        rsiScore = 95;
+        reasoning.push(
+          `💎 Oversold bounce starting (RSI: ${md.rsi.toFixed(0)}, but UP ${md.priceChange7d.toFixed(1)}%)`
+        );
+      } else if (md.rsi < 30) {
+        // Oversold but still falling - risky but potential
+        rsiScore = 60;
+        reasoning.push(`📊 Deeply oversold (RSI: ${md.rsi.toFixed(0)}) - watch for bounce`);
+      } else if (md.rsi < 40 && md.priceChange7d > 0) {
+        rsiScore = 75;
+        reasoning.push(`📈 Oversold recovery (RSI: ${md.rsi.toFixed(0)})`);
+      } else if (md.rsi > 75) {
+        // Overbought = DANGER - heavy penalty
+        rsiScore = 15;
+        reasoning.push(`⚠️ OVERBOUGHT (RSI: ${md.rsi.toFixed(0)}) - pullback likely`);
       } else if (md.rsi > 70) {
-        reasoning.push(`⚠️ Overbought (RSI: ${md.rsi.toFixed(0)})`);
+        rsiScore = 25;
+        reasoning.push(`⚠️ Overbought territory (RSI: ${md.rsi.toFixed(0)})`);
+      } else if (md.rsi > 60 && md.rsi < 70) {
+        // Sweet spot - strong but not overextended
+        rsiScore = 70;
+      } else if (md.rsi >= 40 && md.rsi <= 60) {
+        // Neutral zone
+        rsiScore = 50;
       }
+      scores.meanReversion = rsiScore;
 
+      // ═══════════════════════════════════════════════════════════════════
       // 3. VOLATILITY SCORE (0-100)
-      // In bull market: prefer higher vol, in bear: prefer lower
-      let optimalVol = 20; // Default
-      if (marketRegime.regime === "BULL") optimalVol = 30; // Accept more risk
-      if (marketRegime.regime === "BEAR") optimalVol = 12; // Play safe
+      // We WANT volatility - that's how we WIN
+      // Low volatility = can't make gains = BAD
+      // ═══════════════════════════════════════════════════════════════════
 
-      const volDiff = Math.abs(md.volatility - optimalVol);
-      scores.volatility = Math.max(0, 100 - volDiff * 2.5);
-
-      if (md.volatility > 40) {
-        reasoning.push(`🎢 Very high volatility (${md.volatility.toFixed(0)}%)`);
-      } else if (md.volatility > 25) {
-        reasoning.push(`⚡ High volatility (${md.volatility.toFixed(0)}%)`);
+      // Target: 20-50% volatility is ideal for gains
+      if (md.volatility >= 25 && md.volatility <= 60) {
+        scores.volatility = 90;
+        reasoning.push(`⚡ Optimal volatility (${md.volatility.toFixed(0)}%) - high gain potential`);
+      } else if (md.volatility >= 15 && md.volatility < 25) {
+        scores.volatility = 70;
+      } else if (md.volatility > 60 && md.volatility <= 100) {
+        scores.volatility = 75; // Very volatile - risky but high reward
+        reasoning.push(`🎢 Very high volatility (${md.volatility.toFixed(0)}%) - risky/rewarding`);
+      } else if (md.volatility > 100) {
+        scores.volatility = 50; // Extreme - might be unstable
+        reasoning.push(`💥 EXTREME volatility (${md.volatility.toFixed(0)}%)`);
+      } else if (md.volatility < 15 && md.volatility >= 5) {
+        scores.volatility = 40; // Too calm - hard to make gains
+      } else if (md.volatility < 5) {
+        scores.volatility = 10; // Basically a stablecoin
+        reasoning.push(`😴 Very low volatility (${md.volatility.toFixed(1)}%) - limited upside`);
       }
 
+      // ═══════════════════════════════════════════════════════════════════
       // 4. VOLUME SCORE (0-100)
-      // Rising volume = smart money interest
+      // Rising volume + rising price = SMART MONEY moving in
+      // ═══════════════════════════════════════════════════════════════════
+
       let volumeScore = 50;
-      if (md.volumeChange > 50) {
+
+      // Volume explosion with positive price = FOLLOW THE WHALES
+      if (md.volumeChange > 100 && md.priceChange7d > 5) {
+        volumeScore = 100;
+        reasoning.push(
+          `🐋 WHALE ACCUMULATION (+${md.volumeChange.toFixed(0)}% vol, +${md.priceChange7d.toFixed(1)}% price)`
+        );
+      } else if (md.volumeChange > 50 && md.priceChange7d > 0) {
         volumeScore = 90;
-        reasoning.push(`🔥 Volume explosion (+${md.volumeChange.toFixed(0)}%)`);
-      } else if (md.volumeChange > 20) {
+        reasoning.push(`🔥 Volume surge with price up (+${md.volumeChange.toFixed(0)}%)`);
+      } else if (md.volumeChange > 30) {
         volumeScore = 75;
         reasoning.push(`📊 Volume surge (+${md.volumeChange.toFixed(0)}%)`);
-      } else if (md.volumeChange > 0) {
-        volumeScore = 60 + md.volumeChange;
+      } else if (md.volumeChange > 10) {
+        volumeScore = 65;
+      } else if (md.volumeChange >= -10 && md.volumeChange <= 10) {
+        volumeScore = 50; // Normal volume
+      } else if (md.volumeChange < -30) {
+        volumeScore = 30; // Dying interest
+        reasoning.push(`📉 Volume declining (${md.volumeChange.toFixed(0)}%)`);
       } else {
-        volumeScore = 40 + md.volumeChange * 0.5;
+        volumeScore = 40;
       }
       scores.volume = Math.max(0, Math.min(100, volumeScore));
 
-      // 5. SENTIMENT SCORE (0-100) - from news analysis
+      // ═══════════════════════════════════════════════════════════════════
+      // 5. SENTIMENT SCORE (0-100) - News & buzz
+      // ═══════════════════════════════════════════════════════════════════
+
       scores.sentiment = md.sentimentScore || 50;
-      if (md.newsMentions > 3 && md.sentimentScore > 60) {
-        reasoning.push(`📰 Positive news buzz (${md.newsMentions} articles)`);
-      } else if (md.sentimentScore < 40) {
+      if (md.newsMentions > 5 && md.sentimentScore > 70) {
+        scores.sentiment = Math.min(100, scores.sentiment + 15);
+        reasoning.push(`📰 Strong positive buzz (${md.newsMentions} articles)`);
+      } else if (md.newsMentions > 3 && md.sentimentScore > 60) {
+        reasoning.push(`📰 Positive news (${md.newsMentions} articles)`);
+      } else if (md.sentimentScore < 35) {
+        scores.sentiment = Math.max(0, scores.sentiment - 10);
         reasoning.push(`📰 Negative sentiment`);
       }
 
-      // 6. DIVERSIFICATION SCORE (0-100)
-      // Base score, adjusted in selection phase
-      scores.diversification = 50;
+      // ═══════════════════════════════════════════════════════════════════
+      // 6. BONUS/PENALTY FACTORS - Game changers
+      // ═══════════════════════════════════════════════════════════════════
 
-      // 7. BONUS FACTORS
       let bonus = 0;
 
-      // Near recent lows = potential value (contrarian)
-      if (md.highLowRatio < 0.2) {
+      // BREAKOUT DETECTION: Near highs with volume = breakout!
+      if (md.highLowRatio > 0.85 && md.volumeChange > 20 && md.priceChange7d > 5) {
+        bonus += 25;
+        reasoning.push(`🚀 BREAKOUT - new highs with volume!`);
+      }
+
+      // Near support with bounce starting = great entry
+      if (md.highLowRatio < 0.25 && md.priceChange24h > 2) {
         bonus += 20;
-        reasoning.push(`💰 Near 14-day low - value play`);
-      } else if (md.highLowRatio < 0.3) {
-        bonus += 10;
-        reasoning.push(`📉 Near support levels`);
-      } else if (md.highLowRatio > 0.9) {
-        bonus -= 10;
-        reasoning.push(`⚠️ Near 14-day high`);
+        reasoning.push(`💎 Bouncing off support`);
       }
 
-      // MACD-like momentum confirmation
+      // Momentum acceleration (short > long trend)
       const shortMomentum = md.priceChange7d;
-      const longMomentum = md.priceChange14d / 2; // Normalized
-      if (shortMomentum > longMomentum + 5) {
-        bonus += 10;
-        reasoning.push(`✅ Momentum accelerating`);
+      const longMomentum = md.priceChange14d / 2;
+      if (shortMomentum > longMomentum + 8) {
+        bonus += 15;
+        reasoning.push(`🔥 Momentum accelerating`);
+      } else if (shortMomentum < longMomentum - 8) {
+        bonus -= 15;
+        reasoning.push(`📉 Momentum decelerating`);
       }
 
-      // Calculate weighted total score
+      // PENALTY: Overbought with declining momentum = ABOUT TO DUMP
+      if (md.rsi > 65 && md.priceChange24h < -2) {
+        bonus -= 30;
+        reasoning.push(`⚠️ Overbought and declining - EXIT SIGNAL`);
+      }
+
+      // PENALTY: Extreme negative momentum
+      if (md.priceChange7d < -20) {
+        bonus -= 25;
+        reasoning.push(`🔪 Severe downtrend - avoid`);
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      // FINAL SCORE CALCULATION
+      // ═══════════════════════════════════════════════════════════════════
+
       const totalScore =
         scores.momentum * this.strategies.MOMENTUM +
         scores.meanReversion * this.strategies.MEAN_REVERSION +
         scores.volatility * this.strategies.VOLATILITY +
         scores.volume * this.strategies.VOLUME +
         scores.sentiment * this.strategies.SENTIMENT +
-        scores.diversification * this.strategies.DIVERSIFICATION +
         bonus;
 
       return {
@@ -1046,43 +1216,80 @@ Your picks:`;
         scores,
         totalScore,
         reasoning: reasoning.length > 0 ? reasoning : ["📊 Neutral outlook"],
+        disqualified: false,
       };
     });
   }
 
   /**
-   * Select top assets with diversification
+   * Select top assets - ONLY THE BEST
+   * We're here to WIN, not to diversify into garbage
    */
   selectTopAssets(scoredAssets, numAssets) {
-    // Sort by total score
-    const sorted = [...scoredAssets].sort((a, b) => b.totalScore - a.totalScore);
+    // Step 1: REMOVE all disqualified assets
+    const eligible = scoredAssets.filter((a) => !a.disqualified);
 
-    // Select ensuring some diversification
+    console.log(
+      `🦍 Asset selection: ${scoredAssets.length} total, ${eligible.length} eligible (${
+        scoredAssets.length - eligible.length
+      } disqualified)`
+    );
+
+    // Step 2: REMOVE assets below minimum score threshold
+    const qualityAssets = eligible.filter((a) => a.totalScore >= this.MIN_SCORE_THRESHOLD);
+
+    console.log(
+      `🦍 Quality filter: ${qualityAssets.length} assets above score threshold (${this.MIN_SCORE_THRESHOLD})`
+    );
+
+    // Step 3: Sort by total score (BEST first)
+    const sorted = [...qualityAssets].sort((a, b) => b.totalScore - a.totalScore);
+
+    // Log top 10 for debugging
+    console.log(`🦍 Top 10 candidates:`);
+    sorted.slice(0, 10).forEach((a, i) => {
+      console.log(`   ${i + 1}. ${a.symbol}: ${a.totalScore.toFixed(1)} - ${a.reasoning?.[0] || "N/A"}`);
+    });
+
+    // Step 4: Select top N with slight diversification preference
     const selected = [];
     const categories = new Set();
 
     for (const asset of sorted) {
       if (selected.length >= numAssets) break;
 
-      // Allow max 3 from same category for diversification
+      // Allow max 3 from same category (but don't skip great picks)
       const category = asset.category || "other";
       const categoryCount = selected.filter((a) => (a.category || "other") === category).length;
 
-      if (categoryCount < 3) {
+      // If score is REALLY high (>70), always include regardless of category
+      if (asset.totalScore > 70 || categoryCount < 3) {
         selected.push(asset);
         categories.add(category);
       }
     }
 
-    // If not enough, fill with remaining top scores
+    // Step 5: If not enough quality assets, lower threshold slightly
     if (selected.length < numAssets) {
-      for (const asset of sorted) {
+      console.log(`🦍 Need ${numAssets - selected.length} more assets, expanding search...`);
+
+      // Take from eligible but below threshold, sorted by score
+      const remaining = eligible
+        .filter((a) => !selected.find((s) => s.symbol === a.symbol))
+        .sort((a, b) => b.totalScore - a.totalScore);
+
+      for (const asset of remaining) {
         if (selected.length >= numAssets) break;
-        if (!selected.find((a) => a.symbol === asset.symbol)) {
+        // Only add if score is at least 40 (not complete garbage)
+        if (asset.totalScore >= 40) {
           selected.push(asset);
+          console.log(`🦍 Added ${asset.symbol} (score: ${asset.totalScore.toFixed(1)}) to fill slot`);
         }
       }
     }
+
+    // Final log
+    console.log(`🦍 Final selection: ${selected.map((a) => `${a.symbol}(${a.totalScore.toFixed(0)})`).join(", ")}`);
 
     return selected;
   }
@@ -1201,7 +1408,7 @@ Your picks:`;
 
   /**
    * Fallback to smart random if AI fails
-   * This mimics the original random selection behavior
+   * Still excludes stablecoins and uses volatility-weighted selection
    */
   async fallbackStrategy(gameType, numAssets) {
     console.log("🦍 Using smart random fallback strategy...");
@@ -1223,8 +1430,15 @@ Your picks:`;
         });
       }
 
+      // CRITICAL: Filter out stablecoins even in fallback!
+      const originalCount = assets.length;
+      assets = assets.filter((a) => !this.STABLECOINS.includes(a.symbol?.toUpperCase()));
+      if (originalCount !== assets.length) {
+        console.log(`🦍 Fallback: Excluded ${originalCount - assets.length} stablecoins`);
+      }
+
       if (assets.length === 0) {
-        throw new Error(`No active ${gameType} assets found for fallback!`);
+        throw new Error(`No active ${gameType} assets found for fallback (after excluding stablecoins)!`);
       }
 
       if (assets.length < numAssets) {
