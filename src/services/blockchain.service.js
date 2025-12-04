@@ -6,9 +6,30 @@ const USDC = require("../config/MockUSDC.json");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
 
+// Fallback RPC endpoints for BSC mainnet
+const BSC_RPC_ENDPOINTS = [
+  process.env.BLOCKCHAIN_RPC_URL || config.blockchain.rpcUrl,
+  "https://bsc-dataseed1.binance.org",
+  "https://bsc-dataseed2.binance.org",
+  "https://bsc-dataseed3.binance.org",
+  "https://bsc-dataseed4.binance.org",
+  "https://bsc-dataseed1.defibit.io",
+  "https://bsc-dataseed2.defibit.io",
+  "https://bsc-dataseed1.ninicoin.io",
+  "https://bsc-dataseed2.ninicoin.io",
+].filter(Boolean);
+
 class BlockchainService {
   constructor() {
-    this.provider = new ethers.providers.JsonRpcProvider(config.blockchain.rpcUrl, 56);
+    this.chainId = config.blockchain.chainId || 56;
+    this.currentRpcIndex = 0;
+    this.maxRetries = 3;
+    this.retryDelay = 1000; // Start with 1 second
+    this.lastProviderRefresh = 0;
+    this.providerRefreshInterval = 5 * 60 * 1000; // 5 minutes
+
+    // Initialize provider with retry logic
+    this._initializeProvider();
 
     // Setup admin wallet (for game management: rewards, portfolio creation, etc.)
     this.adminWallet = new ethers.Wallet(config.blockchain.privateKey, this.provider);
@@ -42,12 +63,178 @@ class BlockchainService {
     // Constants
     // ENTRY_FEE is now dynamic - retrieved from game
     this.GAS_FEE = ethers.utils.parseUnits("0.1", 18); // 0.1 USDC (can be made dynamic later)
+
+    console.log(`[BLOCKCHAIN] Service initialized with chainId ${this.chainId}, RPC: ${BSC_RPC_ENDPOINTS[0]}`);
+  }
+
+  /**
+   * Initialize provider with the current RPC endpoint
+   */
+  _initializeProvider() {
+    const rpcUrl = BSC_RPC_ENDPOINTS[this.currentRpcIndex];
+    console.log(`[BLOCKCHAIN] Initializing provider with RPC: ${rpcUrl}`);
+
+    this.provider = new ethers.providers.JsonRpcProvider({
+      url: rpcUrl,
+      timeout: 30000, // 30 second timeout
+    }, this.chainId);
+
+    // Add error listener
+    this.provider.on("error", (error) => {
+      console.error(`[BLOCKCHAIN] Provider error:`, error.message);
+    });
+
+    this.lastProviderRefresh = Date.now();
+  }
+
+  /**
+   * Switch to the next available RPC endpoint
+   */
+  _switchRpcEndpoint() {
+    this.currentRpcIndex = (this.currentRpcIndex + 1) % BSC_RPC_ENDPOINTS.length;
+    const newRpc = BSC_RPC_ENDPOINTS[this.currentRpcIndex];
+    console.log(`[BLOCKCHAIN] Switching to RPC endpoint: ${newRpc}`);
+
+    this._initializeProvider();
+    this._reconnectWallets();
+  }
+
+  /**
+   * Reconnect wallets and contracts to new provider
+   */
+  _reconnectWallets() {
+    this.adminWallet = new ethers.Wallet(config.blockchain.privateKey, this.provider);
+
+    const withdrawalKey = process.env.WITHDRAWAL_WALLET_PRIVATE_KEY;
+    if (withdrawalKey) {
+      this.withdrawalWallet = new ethers.Wallet(withdrawalKey, this.provider);
+    } else {
+      this.withdrawalWallet = this.adminWallet;
+    }
+
+    // Reconnect contracts
+    this.contract = new ethers.Contract(config.blockchain.contractAddress, FusioFantasyGameV2.abi, this.adminWallet);
+    this.withdrawalContract = new ethers.Contract(
+      config.blockchain.contractAddress,
+      FusioFantasyGameV2.abi,
+      this.withdrawalWallet
+    );
+    this.usdcContract = new ethers.Contract(config.blockchain.usdcAddress, USDC.abi, this.adminWallet);
+
+    // Reinitialize transaction queue with new provider
+    transactionQueue.initialize(this.provider, this.adminWallet);
+  }
+
+  /**
+   * Execute a blockchain call with retry logic and RPC fallback
+   * @param {Function} operation - Async function to execute
+   * @param {string} operationName - Name for logging
+   * @param {number} maxRetries - Maximum retry attempts
+   * @returns {Promise<any>} - Result of the operation
+   */
+  async _executeWithRetry(operation, operationName, maxRetries = this.maxRetries) {
+    let lastError;
+    let totalAttempts = 0;
+    const maxTotalAttempts = maxRetries * BSC_RPC_ENDPOINTS.length;
+
+    // Check if provider needs refresh (periodic refresh to avoid stale connections)
+    if (Date.now() - this.lastProviderRefresh > this.providerRefreshInterval) {
+      console.log(`[BLOCKCHAIN] Refreshing provider (periodic)`);
+      this._initializeProvider();
+      this._reconnectWallets();
+    }
+
+    while (totalAttempts < maxTotalAttempts) {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        totalAttempts++;
+        try {
+          return await operation();
+        } catch (error) {
+          lastError = error;
+          const isNetworkError = this._isNetworkError(error);
+
+          console.warn(
+            `[BLOCKCHAIN] ${operationName} failed (attempt ${attempt}/${maxRetries}, RPC ${this.currentRpcIndex + 1}/${BSC_RPC_ENDPOINTS.length}): ${error.message}`
+          );
+
+          if (isNetworkError) {
+            // For network errors, wait and retry
+            if (attempt < maxRetries) {
+              const delay = this.retryDelay * Math.pow(2, attempt - 1); // Exponential backoff
+              console.log(`[BLOCKCHAIN] Retrying in ${delay}ms...`);
+              await this._sleep(delay);
+            }
+          } else {
+            // Non-network errors should not be retried
+            throw error;
+          }
+        }
+      }
+
+      // All retries failed for current RPC, try next one
+      if (totalAttempts < maxTotalAttempts) {
+        console.log(`[BLOCKCHAIN] All retries failed for current RPC, switching endpoint...`);
+        this._switchRpcEndpoint();
+      }
+    }
+
+    // All RPC endpoints and retries exhausted
+    throw lastError;
+  }
+
+  /**
+   * Check if an error is a network-related error that should trigger retry
+   */
+  _isNetworkError(error) {
+    const networkErrorPatterns = [
+      "NETWORK_ERROR",
+      "noNetwork",
+      "could not detect network",
+      "TIMEOUT",
+      "timeout",
+      "ETIMEDOUT",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ENOTFOUND",
+      "SERVER_ERROR",
+      "missing response",
+      "bad response",
+      "connection refused",
+      "socket hang up",
+      "network request failed",
+      "failed to fetch",
+      "rate limit",
+      "Too Many Requests",
+      "429",
+    ];
+
+    const errorMessage = error.message || error.toString();
+    const errorCode = error.code || "";
+
+    return networkErrorPatterns.some(
+      (pattern) =>
+        errorMessage.toLowerCase().includes(pattern.toLowerCase()) ||
+        errorCode.toLowerCase().includes(pattern.toLowerCase())
+    );
+  }
+
+  /**
+   * Sleep utility
+   */
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async checkUSDCAllowance(userAddress, gameId) {
     try {
-      const requiredAmount = await this.contract.getRequiredUSDCApproval(userAddress, gameId);
-      const currentAllowance = await this.usdcContract.allowance(userAddress, config.blockchain.contractAddress);
+      const [requiredAmount, currentAllowance] = await this._executeWithRetry(
+        async () => {
+          const required = await this.contract.getRequiredUSDCApproval(userAddress, gameId);
+          const allowance = await this.usdcContract.allowance(userAddress, config.blockchain.contractAddress);
+          return [required, allowance];
+        },
+        `checkUSDCAllowance(${userAddress}, ${gameId})`
+      );
 
       return {
         needsApproval: currentAllowance.lt(requiredAmount),
@@ -61,7 +248,10 @@ class BlockchainService {
 
   async getUSDCBalance(address) {
     try {
-      const balance = await this.usdcContract.balanceOf(address);
+      const balance = await this._executeWithRetry(
+        () => this.usdcContract.balanceOf(address),
+        `getUSDCBalance(${address})`
+      );
       // Return raw wei value as string for consistent DB storage
       return balance.toString();
     } catch (error) {
@@ -254,7 +444,10 @@ class BlockchainService {
   // View Functions
   async getPortfolio(userAddress, portfolioId) {
     try {
-      const portfolio = await this.contract.getPortfolio(userAddress, portfolioId);
+      const portfolio = await this._executeWithRetry(
+        () => this.contract.getPortfolio(userAddress, portfolioId),
+        `getPortfolio(${userAddress}, ${portfolioId})`
+      );
       return {
         symbols: portfolio[0].map((symbol) => ethers.utils.parseBytes32String(symbol)),
         allocations: portfolio[1].map((n) => n.toString()),
@@ -272,7 +465,10 @@ class BlockchainService {
 
   async getUserPortfolioIds(userAddress) {
     try {
-      const ids = await this.contract.getUserPortfolioIds(userAddress);
+      const ids = await this._executeWithRetry(
+        () => this.contract.getUserPortfolioIds(userAddress),
+        `getUserPortfolioIds(${userAddress})`
+      );
       return ids.map((id) => id.toNumber());
     } catch (error) {
       throw new Error(`Failed to get user portfolio IDs: ${error.message}`);
@@ -281,7 +477,10 @@ class BlockchainService {
 
   async getCurrentGameId() {
     try {
-      const id = await this.contract.currentGameId();
+      const id = await this._executeWithRetry(
+        () => this.contract.currentGameId(),
+        "getCurrentGameId"
+      );
       return id.toNumber();
     } catch (error) {
       throw new Error(`Failed to get current game ID: ${error.message}`);
@@ -290,7 +489,10 @@ class BlockchainService {
 
   async getUserBalances(userAddress) {
     try {
-      const balance = await this.contract.userBalance(userAddress);
+      const balance = await this._executeWithRetry(
+        () => this.contract.userBalance(userAddress),
+        `getUserBalances(${userAddress})`
+      );
       // Return raw wei value as string (blockchain always returns wei)
       return balance.toString();
     } catch (error) {
@@ -300,7 +502,10 @@ class BlockchainService {
 
   async getUserLockedBalance(userAddress) {
     try {
-      const balance = await this.contract.getUserLockedBalance(userAddress);
+      const balance = await this._executeWithRetry(
+        () => this.contract.getUserLockedBalance(userAddress),
+        `getUserLockedBalance(${userAddress})`
+      );
       return balance.toString();
     } catch (error) {
       throw new Error(`Failed to get user locked balance: ${error.message}`);
@@ -311,7 +516,10 @@ class BlockchainService {
   async getGameWinners(gameId) {
     try {
       // Call the public gameWinners mapping getter
-      const winners = await this.contract.getGameWinners(gameId);
+      const winners = await this._executeWithRetry(
+        () => this.contract.getGameWinners(gameId),
+        `getGameWinners(${gameId})`
+      );
       // Convert BigNumber array to number array
       return Array.from(winners).map((id) => id.toNumber());
     } catch (error) {
@@ -321,7 +529,10 @@ class BlockchainService {
 
   async isWinnersCalculationComplete(gameId) {
     try {
-      return await this.contract.isWinnersCalculationComplete(gameId);
+      return await this._executeWithRetry(
+        () => this.contract.isWinnersCalculationComplete(gameId),
+        `isWinnersCalculationComplete(${gameId})`
+      );
     } catch (error) {
       throw new Error(`Failed to check winners calculation status: ${error.message}`);
     }
@@ -431,7 +642,10 @@ class BlockchainService {
   }
   async getGameDetails(gameId) {
     try {
-      const gameDetails = await this.contract.getGameDetails(gameId);
+      const gameDetails = await this._executeWithRetry(
+        () => this.contract.getGameDetails(gameId),
+        `getGameDetails(${gameId})`
+      );
       return {
         startTime: gameDetails[0].toNumber(),
         endTime: gameDetails[1].toNumber(),
@@ -505,7 +719,10 @@ class BlockchainService {
 
   async getPortfolioOwner(portfolioId) {
     try {
-      const owner = await this.contract.getPortfolioOwner(portfolioId);
+      const owner = await this._executeWithRetry(
+        () => this.contract.getPortfolioOwner(portfolioId),
+        `getPortfolioOwner(${portfolioId})`
+      );
       return owner;
     } catch (error) {
       throw new Error(`Failed to get portfolio owner: ${error.message}`);
@@ -522,11 +739,14 @@ class BlockchainService {
       const DEFAULT_ADMIN_ROLE = ethers.constants.HashZero; // 0x0000...
       const GAME_MANAGER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("GAME_MANAGER_ROLE"));
 
-      const [adminHasDefaultAdminRole, adminHasGameManagerRole, withdrawalHasDefaultAdminRole] = await Promise.all([
-        this.contract.hasRole(DEFAULT_ADMIN_ROLE, adminAddress),
-        this.contract.hasRole(GAME_MANAGER_ROLE, adminAddress),
-        this.contract.hasRole(DEFAULT_ADMIN_ROLE, withdrawalAddress),
-      ]);
+      const [adminHasDefaultAdminRole, adminHasGameManagerRole, withdrawalHasDefaultAdminRole] = await this._executeWithRetry(
+        () => Promise.all([
+          this.contract.hasRole(DEFAULT_ADMIN_ROLE, adminAddress),
+          this.contract.hasRole(GAME_MANAGER_ROLE, adminAddress),
+          this.contract.hasRole(DEFAULT_ADMIN_ROLE, withdrawalAddress),
+        ]),
+        "checkAdminRole"
+      );
 
       return {
         // Admin wallet (for game management)
