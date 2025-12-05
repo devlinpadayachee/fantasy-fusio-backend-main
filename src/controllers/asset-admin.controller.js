@@ -94,20 +94,53 @@ exports.getAllGames = asyncHandler(async (req, res) => {
   res.json(formattedGames);
 });
 
-// @desc    Get all games filtered by gameCronId
+// @desc    Get all games filtered by gameCronId with pagination
 // @route   GET /api/admin/assets/games
 // @access  Admin
 exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
-  const { gameCronId } = req.query;
+  const { gameCronId, status, gameType, search, page = 1, limit = 20 } = req.query;
+
+  // Parse pagination params
+  const pageNum = Math.max(1, parseInt(page) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+  const skip = (pageNum - 1) * limitNum;
 
   // Build query
   let query = {};
   if (gameCronId) {
     query.gameCronId = gameCronId;
   }
+  if (status) {
+    query.status = status;
+  }
+  if (gameType) {
+    query.gameType = gameType;
+  }
+  if (search) {
+    // Search by game name or gameId
+    const searchNum = parseInt(search);
+    if (!isNaN(searchNum)) {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { gameId: searchNum },
+      ];
+    } else {
+      query.name = { $regex: search, $options: "i" };
+    }
+  }
 
   const ethers = require("ethers");
-  const games = await Game.find(query).populate("gameCronId", "customGameName creationTime").sort({ createdAt: -1 });
+
+  // Get total count for pagination
+  const totalCount = await Game.countDocuments(query);
+
+  // Fetch paginated games
+  const games = await Game.find(query)
+    .populate("gameCronId", "customGameName creationTime")
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limitNum)
+    .lean();
 
   // Helper function to convert wei to USDC dollars
   const weiToUSDC = (weiValue) => {
@@ -117,7 +150,7 @@ exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
   };
 
   const formattedGames = games.map((game, index) => ({
-    srNo: index + 1,
+    srNo: skip + index + 1,
     _id: game._id,
     gameId: game.gameId,
     gameTitle: `${game.name} #${game.gameId}`,
@@ -133,7 +166,16 @@ exports.getGamesByGameCronId = asyncHandler(async (req, res) => {
     gameCronName: game.gameCronId?.customGameName || "N/A",
   }));
 
-  res.json(formattedGames);
+  res.json({
+    games: formattedGames,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      hasMore: pageNum * limitNum < totalCount,
+    },
+  });
 });
 
 // @desc    Get all portfolios for admin with filtering and pagination
@@ -255,7 +297,7 @@ exports.getAllUsers = asyncHandler(async (req, res) => {
     walletAddress: user.address,
     gamesWon: user.gamesWon || 0,
     totalEarnings: weiToUSDC(user.totalEarnings),
-    lockedBalance: weiToUSDC(user.lockedBalance),
+    // Note: lockedBalance removed - now always fetched from blockchain when needed
     createdAt: user.createdAt,
     lastLogin: user.lastLogin,
   }));

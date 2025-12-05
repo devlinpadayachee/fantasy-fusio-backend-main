@@ -179,7 +179,11 @@ const transactionController = {
         const { gameId } = req.query;
         const user = await User.findById(userId);
 
-        const balance = await blockchainService.getUSDCBalance(user.address);
+        // Fetch both balances from blockchain (source of truth)
+        const [balance, lockedBalanceWei] = await Promise.all([
+            blockchainService.getUSDCBalance(user.address),
+            blockchainService.getUserLockedBalance(user.address),
+        ]);
 
         // Helper function to convert wei to USDC dollars
         const weiToUSDC = (weiValue) => {
@@ -190,7 +194,7 @@ const transactionController = {
 
         const response = {
             balance: weiToUSDC(balance),
-            lockedBalance: weiToUSDC(user.lockedBalance),
+            lockedBalance: weiToUSDC(lockedBalanceWei),
         };
 
         // Only check allowance if gameId is provided

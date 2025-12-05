@@ -100,6 +100,24 @@ const authController = {
         return parseFloat(ethers.utils.formatUnits(weiStr, 18));
       };
 
+      // Fetch withdrawable balance from smart contract (source of truth)
+      // This ensures the balance shown matches the withdraw page
+      let currentBalance = 0;
+      let lockedBalance = 0;
+      try {
+        const [withdrawableBalanceWei, lockedBalanceWei] = await Promise.all([
+          blockchainService.getUserBalances(user.address),
+          blockchainService.getUserLockedBalance(user.address),
+        ]);
+        currentBalance = weiToUSDC(withdrawableBalanceWei);
+        lockedBalance = weiToUSDC(lockedBalanceWei);
+      } catch (error) {
+        console.error("Error fetching on-chain balances:", error);
+        // Return 0 if blockchain call fails - no DB fallback
+        currentBalance = 0;
+        lockedBalance = 0;
+      }
+
       res.json({
         token,
         user: {
@@ -112,8 +130,8 @@ const authController = {
           gamesWon: user.gamesWon,
           uniqueGamesWon: user.uniqueGamesWon,
           totalEarnings: weiToUSDC(user.totalEarnings),
-          currentBalance: weiToUSDC(user.currentBalance),
-          lockedBalance: weiToUSDC(user.lockedBalance),
+          currentBalance: currentBalance, // From blockchain (source of truth)
+          lockedBalance: lockedBalance, // From blockchain (source of truth)
         },
       });
     } catch (error) {
@@ -212,16 +230,22 @@ const authController = {
       return parseFloat(ethers.utils.formatUnits(weiStr, 18));
     };
 
-    // Fetch withdrawable balance from smart contract (source of truth)
-    // This is what users can actually withdraw, same as withdraw page
-    let withdrawableBalance = 0;
+    // Fetch balances from smart contract (source of truth)
+    // This ensures consistency with the withdraw page
+    let currentBalance = 0;
+    let lockedBalance = 0;
     try {
-      const withdrawableBalanceWei = await blockchainService.getUserBalances(user.address);
-      withdrawableBalance = weiToUSDC(withdrawableBalanceWei);
+      const [withdrawableBalanceWei, lockedBalanceWei] = await Promise.all([
+        blockchainService.getUserBalances(user.address),
+        blockchainService.getUserLockedBalance(user.address),
+      ]);
+      currentBalance = weiToUSDC(withdrawableBalanceWei);
+      lockedBalance = weiToUSDC(lockedBalanceWei);
     } catch (error) {
-      console.error("Error fetching withdrawable balance:", error);
-      // Fallback to DB balance if blockchain call fails
-      withdrawableBalance = weiToUSDC(user.currentBalance || "0");
+      console.error("Error fetching on-chain balances:", error);
+      // Return 0 if blockchain call fails - no DB fallback
+      currentBalance = 0;
+      lockedBalance = 0;
     }
 
     res.json({
@@ -235,8 +259,8 @@ const authController = {
         gamesWon: user.gamesWon,
         uniqueGamesWon: user.uniqueGamesWon,
         totalEarnings: weiToUSDC(user.totalEarnings), // Convert to dollars
-        currentBalance: withdrawableBalance, // Withdrawable balance from blockchain (matches withdraw page)
-        lockedBalance: weiToUSDC(user.lockedBalance), // Convert to dollars
+        currentBalance: currentBalance, // From blockchain (source of truth)
+        lockedBalance: lockedBalance, // From blockchain (source of truth)
       },
     });
   }),

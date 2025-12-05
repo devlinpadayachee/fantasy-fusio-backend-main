@@ -44,14 +44,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: "0",
     },
-    currentBalance: {
-      type: String,
-      default: "0",
-    },
-    lockedBalance: {
-      type: String,
-      default: "0",
-    },
+    // NOTE: currentBalance and lockedBalance have been REMOVED from the schema
+    // These values are now always fetched from the blockchain (source of truth)
+    // Use blockchainService.getUserBalances() for withdrawable balance
+    // Use blockchainService.getUserLockedBalance() for locked/in-play balance
     isActive: {
       type: Boolean,
       default: true,
@@ -126,53 +122,9 @@ userSchema.methods.updateGameStats = async function (gameId, portfolioId, perfor
   }
 };
 
-userSchema.methods.updateBalance = function (amount) {
-  try {
-    const currentBalance = BigInt(this.currentBalance || "0");
-    const addAmount = BigInt(amount);
-    this.currentBalance = (currentBalance + addAmount).toString();
-    return this.save();
-  } catch (error) {
-    console.error("Error updating balance:", error);
-    throw error;
-  }
-};
-
-userSchema.methods.lockBalance = function (amount) {
-  try {
-    const currentBalance = BigInt(this.currentBalance || "0");
-    const lockAmount = BigInt(amount);
-    const lockedBalance = BigInt(this.lockedBalance || "0");
-
-    if (currentBalance >= lockAmount) {
-      this.currentBalance = (currentBalance - lockAmount).toString();
-      this.lockedBalance = (lockedBalance + lockAmount).toString();
-      return this.save();
-    }
-    throw new Error("Insufficient balance");
-  } catch (error) {
-    console.error("Error locking balance:", error);
-    throw error;
-  }
-};
-
-userSchema.methods.unlockBalance = function (amount) {
-  try {
-    const lockedBalance = BigInt(this.lockedBalance || "0");
-    const unlockAmount = BigInt(amount);
-    const currentBalance = BigInt(this.currentBalance || "0");
-
-    if (lockedBalance >= unlockAmount) {
-      this.lockedBalance = (lockedBalance - unlockAmount).toString();
-      this.currentBalance = (currentBalance + unlockAmount).toString();
-      return this.save();
-    }
-    throw new Error("Insufficient locked balance");
-  } catch (error) {
-    console.error("Error unlocking balance:", error);
-    throw error;
-  }
-};
+// REMOVED: updateBalance, lockBalance, unlockBalance methods
+// These are no longer used - balances are now always pulled from the blockchain (source of truth)
+// See blockchainService.getUserBalances() and blockchainService.getUserLockedBalance()
 
 userSchema.methods.getGameHistory = async function (options = {}) {
   const Portfolio = require("./Portfolio");
@@ -209,46 +161,6 @@ userSchema.methods.getGameHistory = async function (options = {}) {
     pagination: {
       page: parseInt(page),
       limit: parseInt(limit),
-      total,
-      pages: Math.ceil(total / limit),
-    },
-  };
-};
-
-userSchema.methods.getGameHistory = async function (options = {}) {
-  const Portfolio = require("./Portfolio");
-  const { limit = 50, page = 1, gameType, status } = options;
-
-  const query = { userId: this._id };
-  if (gameType) {
-    query.gameType = gameType.toUpperCase();
-  }
-  if (status) {
-    query.status = status;
-  }
-
-  const portfolios = await Portfolio.find(query)
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .lean();
-
-  const total = await Portfolio.countDocuments(query);
-
-  return {
-    history: portfolios.map((p) => ({
-      gameId: p.gameId,
-      portfolioId: p.portfolioId,
-      portfolioName: p.portfolioName,
-      performance: p.performancePercentage,
-      earnings: p.gameOutcome?.reward || "0",
-      rank: p.gameOutcome?.rank,
-      status: p.status,
-      timestamp: p.createdAt,
-    })),
-    pagination: {
-      page,
-      limit,
       total,
       pages: Math.ceil(total / limit),
     },
