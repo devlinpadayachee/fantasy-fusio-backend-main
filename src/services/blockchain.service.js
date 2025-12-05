@@ -74,10 +74,13 @@ class BlockchainService {
     const rpcUrl = BSC_RPC_ENDPOINTS[this.currentRpcIndex];
     console.log(`[BLOCKCHAIN] Initializing provider with RPC: ${rpcUrl}`);
 
-    this.provider = new ethers.providers.JsonRpcProvider({
-      url: rpcUrl,
-      timeout: 30000, // 30 second timeout
-    }, this.chainId);
+    this.provider = new ethers.providers.JsonRpcProvider(
+      {
+        url: rpcUrl,
+        timeout: 30000, // 30 second timeout
+      },
+      this.chainId
+    );
 
     // Add error listener
     this.provider.on("error", (error) => {
@@ -154,7 +157,9 @@ class BlockchainService {
           const isNetworkError = this._isNetworkError(error);
 
           console.warn(
-            `[BLOCKCHAIN] ${operationName} failed (attempt ${attempt}/${maxRetries}, RPC ${this.currentRpcIndex + 1}/${BSC_RPC_ENDPOINTS.length}): ${error.message}`
+            `[BLOCKCHAIN] ${operationName} failed (attempt ${attempt}/${maxRetries}, RPC ${this.currentRpcIndex + 1}/${
+              BSC_RPC_ENDPOINTS.length
+            }): ${error.message}`
           );
 
           if (isNetworkError) {
@@ -227,14 +232,11 @@ class BlockchainService {
 
   async checkUSDCAllowance(userAddress, gameId) {
     try {
-      const [requiredAmount, currentAllowance] = await this._executeWithRetry(
-        async () => {
-          const required = await this.contract.getRequiredUSDCApproval(userAddress, gameId);
-          const allowance = await this.usdcContract.allowance(userAddress, config.blockchain.contractAddress);
-          return [required, allowance];
-        },
-        `checkUSDCAllowance(${userAddress}, ${gameId})`
-      );
+      const [requiredAmount, currentAllowance] = await this._executeWithRetry(async () => {
+        const required = await this.contract.getRequiredUSDCApproval(userAddress, gameId);
+        const allowance = await this.usdcContract.allowance(userAddress, config.blockchain.contractAddress);
+        return [required, allowance];
+      }, `checkUSDCAllowance(${userAddress}, ${gameId})`);
 
       return {
         needsApproval: currentAllowance.lt(requiredAmount),
@@ -477,10 +479,7 @@ class BlockchainService {
 
   async getCurrentGameId() {
     try {
-      const id = await this._executeWithRetry(
-        () => this.contract.currentGameId(),
-        "getCurrentGameId"
-      );
+      const id = await this._executeWithRetry(() => this.contract.currentGameId(), "getCurrentGameId");
       return id.toNumber();
     } catch (error) {
       throw new Error(`Failed to get current game ID: ${error.message}`);
@@ -739,14 +738,16 @@ class BlockchainService {
       const DEFAULT_ADMIN_ROLE = ethers.constants.HashZero; // 0x0000...
       const GAME_MANAGER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("GAME_MANAGER_ROLE"));
 
-      const [adminHasDefaultAdminRole, adminHasGameManagerRole, withdrawalHasDefaultAdminRole] = await this._executeWithRetry(
-        () => Promise.all([
-          this.contract.hasRole(DEFAULT_ADMIN_ROLE, adminAddress),
-          this.contract.hasRole(GAME_MANAGER_ROLE, adminAddress),
-          this.contract.hasRole(DEFAULT_ADMIN_ROLE, withdrawalAddress),
-        ]),
-        "checkAdminRole"
-      );
+      const [adminHasDefaultAdminRole, adminHasGameManagerRole, withdrawalHasDefaultAdminRole] =
+        await this._executeWithRetry(
+          () =>
+            Promise.all([
+              this.contract.hasRole(DEFAULT_ADMIN_ROLE, adminAddress),
+              this.contract.hasRole(GAME_MANAGER_ROLE, adminAddress),
+              this.contract.hasRole(DEFAULT_ADMIN_ROLE, withdrawalAddress),
+            ]),
+          "checkAdminRole"
+        );
 
       return {
         // Admin wallet (for game management)
