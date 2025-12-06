@@ -60,11 +60,59 @@ const gameController = {
   }),
 
   // New controller method to get upcoming games
+  // Optionally accepts userId (wallet address) to include user participation data
   getUpcomingGames: asyncHandler(async (req, res) => {
     try {
+      const { userId } = req.query;
+
       // Return both UPCOMING and ACTIVE games (live games)
       const games = await gameService.getGamesByStatus(["UPCOMING", "ACTIVE"]);
-      res.json({ games });
+
+      // If userId provided, fetch participation data in a single aggregation
+      let gamesWithParticipation = games;
+
+      if (userId) {
+        // Find user by wallet address
+        const user = await User.findOne({ address: userId });
+
+        if (user) {
+          // Get all user's portfolio counts for these games in ONE query
+          const gameIds = games.map(g => g.gameId);
+
+          const participationCounts = await Portfolio.aggregate([
+            {
+              $match: {
+                gameId: { $in: gameIds },
+                userId: user._id,
+                status: { $nin: ["PENDING_LOCK_BALANCE", "FAILED"] }
+              }
+            },
+            {
+              $group: {
+                _id: "$gameId",
+                count: { $sum: 1 }
+              }
+            }
+          ]);
+
+          // Create a lookup map
+          const participationMap = participationCounts.reduce((acc, item) => {
+            acc[item._id] = item.count;
+            return acc;
+          }, {});
+
+          // Enrich games with participation data
+          gamesWithParticipation = games.map(game => ({
+            ...game.toObject(),
+            userParticipation: {
+              portfolioCount: participationMap[game.gameId] || 0,
+              hasPortfolios: (participationMap[game.gameId] || 0) > 0
+            }
+          }));
+        }
+      }
+
+      res.json({ games: gamesWithParticipation });
     } catch (error) {
       console.error("Error fetching upcoming games:", error);
       res.status(500).json({ error: "Failed to fetch upcoming games" });
